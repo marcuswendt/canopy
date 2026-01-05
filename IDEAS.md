@@ -4,12 +4,29 @@
 
 ### Data Inspector
 
-- what's actually in the database?
-- what's the current AI context?
-- what integrations are running?
-- what signals do they send?
+**Status:** Implemented, needs debugging
 
-we need to be able to see/ inspect the internals of the system similar to a browser devtools inspector
+Toggle: `Cmd+Shift+D` or View → Data Inspector
+
+Shows:
+
+- Database tab: entities, threads, memories
+- AI Context tab: entity store, reference sources
+- Integrations tab: plugin status, sync times
+- Signals tab: live integration signals
+
+**TODO:** Debug and verify all tabs work correctly in Electron environment.
+
+### Memory Extraction Issues
+
+**Status:** Fixed
+
+The memory extraction was too aggressive - stored facts that were already known. Fixed by:
+
+- Updated extraction prompt to explicitly skip restatements of known information
+- Pass existing entities (with attributes) and memories as context to extraction
+- Added Jaccard similarity-based duplicate detection before storing
+- Both `extractMemories` and `extractMemoriesFromThread` now receive full context
 
 ---
 

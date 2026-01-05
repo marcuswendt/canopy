@@ -77,7 +77,7 @@ const MEMORY_SCHEMA = {
 // EXTRACTION
 // =============================================================================
 
-const EXTRACTION_PROMPT = `You are analyzing a conversation to extract memorable facts about the user.
+const EXTRACTION_PROMPT = `You are analyzing a conversation to extract NEW memorable facts about the user.
 
 Extract facts that would be useful to remember for future conversations:
 - User preferences (how they like to work, communicate, etc.)
@@ -85,6 +85,14 @@ Extract facts that would be useful to remember for future conversations:
 - Decisions made (chose X over Y, committed to something)
 - Events (upcoming trips, deadlines, milestones)
 - Insights (patterns they've noticed, lessons learned)
+
+CRITICAL - DO NOT EXTRACT:
+- Facts the assistant is merely restating or confirming from known context
+- Information that's already provided in the "Already known" section below
+- Facts that are essentially duplicates of existing memories (even if worded differently)
+- The assistant's own statements, summaries, or restatements of known data
+
+ONLY extract genuinely NEW information that the USER shares in their messages.
 
 IMPORTANT:
 - Write facts as statements about the user: "User prefers X" or "User's wife is named Sarah"
@@ -94,7 +102,7 @@ IMPORTANT:
 - Medium importance: preferences, ongoing projects, regular activities
 - Low importance: one-off mentions, minor details
 
-If the conversation is just casual chat with nothing memorable, set shouldRemember to false.`;
+If the conversation is just casual chat with nothing memorable, or only contains restatements of already-known information, set shouldRemember to false.`;
 
 /**
  * Extract memorable facts from a conversation exchange
@@ -102,22 +110,46 @@ If the conversation is just casual chat with nothing memorable, set shouldRememb
 export async function extractMemories(
   userMessage: string,
   assistantResponse: string,
-  existingEntities: Entity[] = []
+  existingEntities: Entity[] = [],
+  existingMemories: Memory[] = []
 ): Promise<ExtractedFact[]> {
   // Skip very short exchanges
   if (userMessage.length < 20 && assistantResponse.length < 50) {
     return [];
   }
 
-  // Build context with entity names for better extraction
-  const entityContext = existingEntities.length > 0
-    ? `\n\nKnown entities: ${existingEntities.map(e => `${e.name} (${e.type})`).join(', ')}`
-    : '';
+  // Build context with entity information (names + key details)
+  let knownContext = '';
+
+  if (existingEntities.length > 0) {
+    const entityDetails = existingEntities.map(e => {
+      let detail = `${e.name} (${e.type})`;
+      if (e.attributes) {
+        const attrs = JSON.parse(e.attributes);
+        const keyAttrs = Object.entries(attrs)
+          .slice(0, 3)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(', ');
+        if (keyAttrs) detail += ` - ${keyAttrs}`;
+      }
+      return detail;
+    }).join('\n  - ');
+    knownContext += `\n\nAlready known entities:\n  - ${entityDetails}`;
+  }
+
+  // Add existing memories as context
+  if (existingMemories.length > 0) {
+    const recentMemories = existingMemories
+      .slice(0, 20) // Limit to avoid context overflow
+      .map(m => m.content)
+      .join('\n  - ');
+    knownContext += `\n\nAlready known memories:\n  - ${recentMemories}`;
+  }
 
   const conversationText = `User: ${userMessage}\n\nAssistant: ${assistantResponse}`;
 
   const result = await extract<ExtractionResult>(
-    EXTRACTION_PROMPT + entityContext,
+    EXTRACTION_PROMPT + knownContext,
     conversationText,
     MEMORY_SCHEMA
   );
@@ -139,7 +171,8 @@ export async function extractMemories(
  */
 export async function extractMemoriesFromThread(
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
-  existingEntities: Entity[] = []
+  existingEntities: Entity[] = [],
+  existingMemories: Memory[] = []
 ): Promise<ExtractedFact[]> {
   // Build conversation transcript
   const transcript = messages
@@ -150,12 +183,36 @@ export async function extractMemoriesFromThread(
     return [];
   }
 
-  const entityContext = existingEntities.length > 0
-    ? `\n\nKnown entities: ${existingEntities.map(e => `${e.name} (${e.type})`).join(', ')}`
-    : '';
+  // Build context with entity information (names + key details)
+  let knownContext = '';
+
+  if (existingEntities.length > 0) {
+    const entityDetails = existingEntities.map(e => {
+      let detail = `${e.name} (${e.type})`;
+      if (e.attributes) {
+        const attrs = JSON.parse(e.attributes);
+        const keyAttrs = Object.entries(attrs)
+          .slice(0, 3)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(', ');
+        if (keyAttrs) detail += ` - ${keyAttrs}`;
+      }
+      return detail;
+    }).join('\n  - ');
+    knownContext += `\n\nAlready known entities:\n  - ${entityDetails}`;
+  }
+
+  // Add existing memories as context
+  if (existingMemories.length > 0) {
+    const recentMemories = existingMemories
+      .slice(0, 20)
+      .map(m => m.content)
+      .join('\n  - ');
+    knownContext += `\n\nAlready known memories:\n  - ${recentMemories}`;
+  }
 
   const result = await extract<ExtractionResult>(
-    EXTRACTION_PROMPT + entityContext,
+    EXTRACTION_PROMPT + knownContext,
     transcript.slice(0, 10000), // Limit to ~10k chars
     MEMORY_SCHEMA
   );
@@ -170,6 +227,54 @@ export async function extractMemoriesFromThread(
   }
 
   return result.data.facts;
+}
+
+// =============================================================================
+// DUPLICATE DETECTION
+// =============================================================================
+
+/**
+ * Check if a fact is a duplicate of an existing memory
+ * Uses simple text similarity - if >70% of words overlap, it's likely a duplicate
+ */
+export function isDuplicateFact(
+  fact: ExtractedFact,
+  existingMemories: Memory[]
+): boolean {
+  const factWords = new Set(
+    fact.content.toLowerCase().split(/\s+/).filter(w => w.length > 3)
+  );
+
+  for (const memory of existingMemories) {
+    const memoryWords = new Set(
+      memory.content.toLowerCase().split(/\s+/).filter(w => w.length > 3)
+    );
+
+    // Calculate Jaccard similarity
+    const intersection = [...factWords].filter(w => memoryWords.has(w)).length;
+    const union = new Set([...factWords, ...memoryWords]).size;
+
+    if (union === 0) continue;
+
+    const similarity = intersection / union;
+
+    // If >70% similar, consider it a duplicate
+    if (similarity > 0.7) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Filter out duplicate facts from extraction results
+ */
+export function filterDuplicateFacts(
+  facts: ExtractedFact[],
+  existingMemories: Memory[]
+): ExtractedFact[] {
+  return facts.filter(fact => !isDuplicateFact(fact, existingMemories));
 }
 
 // =============================================================================

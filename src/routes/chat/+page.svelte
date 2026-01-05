@@ -17,7 +17,7 @@
     getMemories
   } from '$lib/db/client';
   import { generateChatResponse, getReferencesForQuery } from '$lib/ai/extraction';
-  import { extractMemories, matchEntitiesToFact, selectRelevantMemories } from '$lib/ai/memory';
+  import { extractMemories, matchEntitiesToFact, selectRelevantMemories, filterDuplicateFacts } from '$lib/ai/memory';
   import { hasApiKey, getFallbackMessage } from '$lib/ai';
   import { buildChatContext, estimateMessageTokens } from '$lib/ai/context';
   import type { Entity, Message, Thread, Memory } from '$lib/db/types';
@@ -251,7 +251,16 @@
     sourceThreadId: string
   ) {
     try {
-      const facts = await extractMemories(userMessage, assistantResponse, allEntities);
+      // Fetch existing memories to avoid duplicates
+      const existingMemories = await getMemories(50);
+
+      // Extract facts, passing existing context
+      let facts = await extractMemories(userMessage, assistantResponse, allEntities, existingMemories);
+
+      if (facts.length === 0) return;
+
+      // Additional safety: filter out any duplicates that slipped through
+      facts = filterDuplicateFacts(facts, existingMemories);
 
       if (facts.length === 0) return;
 
@@ -420,10 +429,10 @@
     flex-direction: column;
     background: linear-gradient(
       180deg,
-      #87ceeb 0%,
-      #98d4a4 30%,
-      #4a7c59 60%,
-      #2d5a3d 100%
+      var(--gradient-sky) 0%,
+      var(--gradient-mid) 30%,
+      var(--gradient-low) 60%,
+      var(--gradient-ground) 100%
     );
     padding: var(--space-md);
     padding-top: 40px;
