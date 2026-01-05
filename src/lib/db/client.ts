@@ -80,6 +80,138 @@ export async function upsertRelationship(
   }
 }
 
+/**
+ * Record co-occurrence of entities mentioned together.
+ * Creates or strengthens 'mentioned_with' relationships between all pairs.
+ */
+export async function recordCoOccurrence(entityIds: string[]): Promise<void> {
+  if (entityIds.length < 2) return;
+
+  // Create relationships between all pairs of entities
+  for (let i = 0; i < entityIds.length; i++) {
+    for (let j = i + 1; j < entityIds.length; j++) {
+      const sourceId = entityIds[i];
+      const targetId = entityIds[j];
+
+      if (isElectron) {
+        // Get existing relationship to increment weight
+        const relationships = await window.canopy.getRelationships();
+        const existing = relationships.find(
+          r => r.type === 'mentioned_with' &&
+          ((r.source_id === sourceId && r.target_id === targetId) ||
+           (r.source_id === targetId && r.target_id === sourceId))
+        );
+
+        const newWeight = (existing?.weight || 0) + 1;
+        await window.canopy.upsertRelationship({
+          sourceId,
+          targetId,
+          type: 'mentioned_with',
+          weight: newWeight
+        });
+      } else {
+        // Mock for web dev
+        console.log(`Co-occurrence: ${sourceId} <-> ${targetId}`);
+      }
+    }
+  }
+}
+
+/**
+ * Get all entities related to a given entity through any relationship.
+ * Returns entities sorted by relationship weight (strongest first).
+ */
+export async function getRelatedEntities(
+  entityId: string,
+  relationshipTypes?: Relationship['type'][]
+): Promise<{ entity: Entity; relationship: Relationship }[]> {
+  const relationships = await getRelationships();
+  const entities = await getEntities();
+
+  const entityMap = new Map(entities.map(e => [e.id, e]));
+
+  const related = relationships
+    .filter(r => {
+      const matchesEntity = r.source_id === entityId || r.target_id === entityId;
+      const matchesType = !relationshipTypes || relationshipTypes.includes(r.type);
+      return matchesEntity && matchesType;
+    })
+    .map(r => {
+      const relatedId = r.source_id === entityId ? r.target_id : r.source_id;
+      const entity = entityMap.get(relatedId);
+      return entity ? { entity, relationship: r } : null;
+    })
+    .filter((item): item is { entity: Entity; relationship: Relationship } => item !== null)
+    .sort((a, b) => b.relationship.weight - a.relationship.weight);
+
+  return related;
+}
+
+/**
+ * Get threads that mention a specific entity.
+ */
+export async function getThreadsForEntity(entityId: string): Promise<Thread[]> {
+  if (isElectron) {
+    const threads = await window.canopy.getRecentThreads(100);
+    return threads.filter(t => {
+      const entityIds = parseJsonField<string[]>(t.entity_ids) || [];
+      return entityIds.includes(entityId);
+    });
+  }
+  return getSampleThreads().filter(t => t.title?.toLowerCase().includes(entityId));
+}
+
+/**
+ * Get a relationship graph starting from an entity.
+ * Traverses up to `depth` levels of relationships.
+ */
+export async function getEntityGraph(
+  startEntityId: string,
+  depth: number = 2
+): Promise<{
+  nodes: Map<string, Entity>;
+  edges: Relationship[];
+}> {
+  const nodes = new Map<string, Entity>();
+  const edges: Relationship[] = [];
+  const visited = new Set<string>();
+
+  const entities = await getEntities();
+  const relationships = await getRelationships();
+
+  const entityMap = new Map(entities.map(e => [e.id, e]));
+
+  async function traverse(entityId: string, currentDepth: number) {
+    if (visited.has(entityId) || currentDepth > depth) return;
+    visited.add(entityId);
+
+    const entity = entityMap.get(entityId);
+    if (entity) {
+      nodes.set(entityId, entity);
+    }
+
+    // Find all relationships for this entity
+    const entityRelations = relationships.filter(
+      r => r.source_id === entityId || r.target_id === entityId
+    );
+
+    for (const rel of entityRelations) {
+      // Only add edge once
+      if (!edges.find(e => e.id === rel.id)) {
+        edges.push(rel);
+      }
+
+      // Traverse to connected entity
+      const nextId = rel.source_id === entityId ? rel.target_id : rel.source_id;
+      await traverse(nextId, currentDepth + 1);
+    }
+  }
+
+  await traverse(startEntityId, 0);
+
+  return { nodes, edges };
+}
+
 // ============ Captures ============
 
 export async function createCapture(
@@ -123,6 +255,20 @@ export async function getRecentThreads(limit?: number): Promise<Thread[]> {
     return await window.canopy.getRecentThreads(limit);
   }
   return getSampleThreads();
+}
+
+export async function updateThread(
+  threadId: string,
+  updates: {
+    domains?: string[];
+    entityIds?: string[];
+    summary?: string;
+    summaryUpTo?: number;
+  }
+): Promise<void> {
+  if (isElectron) {
+    await window.canopy.updateThread({ threadId, ...updates });
+  }
 }
 
 // ============ Messages ============

@@ -41,6 +41,8 @@ export interface Thread {
   domains?: string;    // JSON array
   entity_ids?: string; // JSON array
   message_count: number;
+  summary?: string;      // Compacted conversation summary
+  summary_up_to?: number; // Message index where summary ends
   created_at: string;
   updated_at: string;
 }
@@ -65,6 +67,19 @@ export interface Memory {
   tags?: string; // JSON array
   created_at: string;
   expires_at?: string;
+}
+
+export interface Artifact {
+  id: string;
+  title: string;
+  type: 'plan' | 'note' | 'document' | 'code' | 'checklist';
+  content: string;
+  entities?: string; // JSON array of entity IDs
+  domains?: string;  // JSON array
+  pinned?: boolean;
+  metadata?: string; // JSON - can store version history, etc.
+  created_at: string;
+  updated_at: string;
 }
 
 // Electron API interface (exposed via preload)
@@ -133,6 +148,35 @@ export interface CanopyAPI {
     entities: Entity[];
     memories: Memory[];
   }>;
+
+  // Secrets
+  getSecret: (key: string) => Promise<string | null>;
+  setSecret: (key: string, value: string) => Promise<{ success: boolean }>;
+  deleteSecret: (key: string) => Promise<{ success: boolean }>;
+
+  // Artifacts
+  getArtifacts: () => Promise<Artifact[]>;
+  createArtifact: (data: {
+    id?: string;
+    title: string;
+    type: Artifact['type'];
+    content: string;
+    entities?: string[];
+    domains?: string[];
+    pinned?: boolean;
+    metadata?: Record<string, unknown>;
+  }) => Promise<Artifact>;
+  updateArtifact: (data: {
+    id: string;
+    title?: string;
+    content?: string;
+    pinned?: boolean;
+    entities?: string[];
+    domains?: string[];
+    metadata?: Record<string, unknown>;
+  }) => Promise<Artifact>;
+  deleteArtifact: (id: string) => Promise<{ success: boolean }>;
+  getArtifactsForEntities: (entityIds: string[]) => Promise<Artifact[]>;
 }
 
 // Extend Window interface
