@@ -691,11 +691,13 @@ export interface OnboardingResponse {
   // Entities extracted from the user's last message
   extractedEntities?: Array<{
     name: string;
-    type: 'person' | 'project' | 'company' | 'event';
+    type: 'person' | 'project' | 'company' | 'event' | 'goal' | 'focus';
     domain: 'work' | 'family' | 'sport' | 'personal' | 'health';
     description?: string;
     relationship?: string;
     needsConfirmation?: boolean;  // True if entity type is ambiguous and needs user confirmation
+    priority?: 'critical' | 'active' | 'background';  // For goals and focuses: how important
+    targetDate?: string;  // For goals: when to achieve (e.g., "May 2026", "this year")
   }>;
 
   // Domains extracted from the user's last message
@@ -726,13 +728,22 @@ const ONBOARDING_RESPONSE_SCHEMA = {
         type: 'object',
         properties: {
           name: { type: 'string' },
-          type: { type: 'string', enum: ['person', 'project', 'company', 'event'] },
+          type: { type: 'string', enum: ['person', 'project', 'company', 'event', 'goal', 'focus'] },
           domain: { type: 'string', enum: ['work', 'family', 'sport', 'personal', 'health'] },
           description: { type: 'string' },
           relationship: { type: 'string' },
           needsConfirmation: {
             type: 'boolean',
             description: 'True if this entity type is ambiguous and needs user confirmation (especially for companies/organisations)'
+          },
+          priority: {
+            type: 'string',
+            enum: ['critical', 'active', 'background'],
+            description: 'For goals: critical = must achieve, active = working on, background = nice to have'
+          },
+          targetDate: {
+            type: 'string',
+            description: 'For goals: when to achieve (e.g., "May 2026", "this year", "Q2 2026")'
           }
         },
         required: ['name', 'type', 'domain']
@@ -825,6 +836,29 @@ ENTITY EXTRACTION RULES:
 - Events: Races, conferences, deadlines the user is participating in
 - Projects: Work initiatives, side projects the user is actively working on
 - Set needsConfirmation=true for any company where ownership/role is unclear
+
+GOAL EXTRACTION RULES:
+- Goals are distinct from projects - they are specific outcomes the user wants to achieve
+- Look for phrases like: "I want to", "I need to", "my goal is", "aiming for", "targeting", "hoping to"
+- Examples: "lose weight", "complete HMR", "finish renovation by summer", "gain structure and control"
+- For races: the race itself is an 'event', but "complete HMR as my A-race" or "finish mid-pack" is a 'goal'
+- Set priority based on language: "my main goal", "A-race", "primary focus" = critical; "would like to" = active; "maybe", "someday" = background
+- Include targetDate when mentioned (e.g., "this year", "by May", "Q2 2026")
+- Goals should have actionable descriptions (what success looks like)
+
+FOCUS EXTRACTION RULES (important - read between the lines):
+- Focuses are ongoing life themes or areas requiring sustained attention - NOT concrete deliverables
+- Extract implicit themes from emotional language, repeated concerns, or underlying tensions
+- Examples from "I have three energetic boys... I want to become a better mother and stay more in control":
+  - "Motherhood & Parenting" (focus, family) - not explicitly stated but clearly a major theme
+  - "Structure & Control" (focus, personal) - underlying need mentioned across topics
+- Examples from "My husband runs his own company... I want to support him in work-life balance":
+  - "Partnership & Marriage" (focus, family) - relationship dynamics are clearly important
+- Focuses often span multiple explicit mentions - look for patterns
+- Good focus names are 2-4 words, thematic: "Work-Life Balance", "Body & Fertility", "Mental Load", "Emotional Processing"
+- Set priority based on emotional weight: deeply felt concerns = critical, ongoing themes = active
+- Description should explain the underlying theme (what's really going on)
+- Focuses help organize the user's mental model - they're the "pillars" of their life
 
 User's last message: "${context.messages[context.messages.length - 1]?.content || ''}"`;
 

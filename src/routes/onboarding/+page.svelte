@@ -59,7 +59,7 @@
 
   // Collected data during onboarding (AI-driven)
   let collectedDomains = $state<string[]>([]);
-  let collectedEntities = $state<{ name: string; type: string; domain: string; description?: string; relationship?: string }[]>([]);
+  let collectedEntities = $state<{ name: string; type: string; domain: string; description?: string; relationship?: string; priority?: string; targetDate?: string }[]>([]);
   let collectedUrls = $state<string[]>([]);
 
   // Existing entities from database (for duplicate detection)
@@ -448,11 +448,11 @@
 
           // Create a domain entity in the database
           const domainLabels: Record<string, string> = {
-            work: 'Work',
-            family: 'Family',
+            work: 'Work & Career',
+            family: 'Family & Home',
             sport: 'Sport & Fitness',
-            personal: 'Personal',
-            health: 'Health'
+            personal: 'Personal Projects',
+            health: 'Health & Wellness'
           };
           const created = await createEntity(
             'domain',
@@ -498,17 +498,28 @@
 
           collectedEntities = [...collectedEntities, entity];
           // Save to database immediately
-          const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept'> = {
+          const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept' | 'goal' | 'focus'> = {
             person: 'person',
             project: 'project',
             company: 'project',
             event: 'event',
+            goal: 'goal',
+            focus: 'focus',
           };
+          // Build description - include priority and target date for goals/focuses
+          let description = entity.description || entity.relationship || '';
+          if (entity.type === 'goal' || entity.type === 'focus') {
+            const parts: string[] = [];
+            if (entity.priority) parts.push(`Priority: ${entity.priority}`);
+            if (entity.targetDate) parts.push(`Target: ${entity.targetDate}`);
+            if (description) parts.push(description);
+            description = parts.join(' | ');
+          }
           const created = await createEntity(
             typeMap[entity.type] || 'project',
             entity.name,
             entity.domain as any,
-            entity.description || entity.relationship
+            description
           );
           // Mark as mentioned so it shows up with a "last active" timestamp
           if (created?.id) {
@@ -683,11 +694,13 @@
     pendingConfirmations = pendingConfirmations.filter(p => p.name !== entity.name);
 
     // Create the entity
-    const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept'> = {
+    const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept' | 'goal' | 'focus'> = {
       person: 'person',
       project: 'project',
       company: 'project',
       event: 'event',
+      goal: 'goal',
+      focus: 'focus',
     };
     const created = await createEntity(
       typeMap[entity.type] || 'project',
@@ -730,11 +743,11 @@
     if (domains.length > 0) {
       // Group by type and show clean labels
       const domainLabels: Record<string, string> = {
-        work: 'Work',
-        family: 'Family',
+        work: 'Work & Career',
+        family: 'Family & Home',
         sport: 'Sport & Fitness',
-        personal: 'Personal & Side Projects',
-        health: 'Health'
+        personal: 'Personal Projects',
+        health: 'Health & Wellness'
       };
       summary += '**Spaces:**\n';
       // Deduplicate by type
@@ -747,7 +760,25 @@
       summary += uniqueDomains.map(d => `  ◆ ${domainLabels[d.type] || d.type}`).join('\n');
     }
 
-    // 2. People (filter by type='person')
+    // 2. Focuses (life themes - filter by type='focus')
+    const focuses = collectedEntities.filter(e => e.type === 'focus');
+    if (focuses.length > 0) {
+      summary += '\n\n**Key focuses:**\n';
+      // Sort by priority: critical first, then active, then background
+      const priorityOrder = { critical: 0, active: 1, background: 2 };
+      const sortedFocuses = [...focuses].sort((a, b) => {
+        const aPri = priorityOrder[a.priority as keyof typeof priorityOrder] ?? 1;
+        const bPri = priorityOrder[b.priority as keyof typeof priorityOrder] ?? 1;
+        return aPri - bPri;
+      });
+      summary += sortedFocuses.map(f => {
+        let line = `  ◇ ${f.name}`;
+        if (f.priority === 'critical') line += ' ⭐';
+        return line;
+      }).join('\n');
+    }
+
+    // 3. People (filter by type='person')
     const people = collectedEntities.filter(e => e.type === 'person');
     if (people.length > 0) {
       summary += '\n\n**People:**\n';
@@ -756,7 +787,7 @@
       ).join('\n');
     }
 
-    // 3. Projects (filter by type='project' or 'company')
+    // 4. Projects (filter by type='project' or 'company')
     const projects = collectedEntities.filter(e => e.type === 'project' || e.type === 'company');
     if (projects.length > 0) {
       summary += '\n\n**Projects:**\n';
@@ -766,14 +797,33 @@
       }).join('\n');
     }
 
-    // 4. Events (filter by type='event')
+    // 5. Events (filter by type='event')
     const events = collectedEntities.filter(e => e.type === 'event');
     if (events.length > 0) {
       summary += '\n\n**Upcoming:**\n';
       summary += events.slice(0, 5).map(e => `  └── ${e.name}`).join('\n');
     }
 
-    // 5. Digital presence - only show user's own profiles (not external references)
+    // 6. Goals (filter by type='goal')
+    const goals = collectedEntities.filter(e => e.type === 'goal');
+    if (goals.length > 0) {
+      summary += '\n\n**Goals:**\n';
+      // Sort by priority: critical first, then active, then background
+      const priorityOrder = { critical: 0, active: 1, background: 2 };
+      const sortedGoals = [...goals].sort((a, b) => {
+        const aPri = priorityOrder[a.priority as keyof typeof priorityOrder] ?? 1;
+        const bPri = priorityOrder[b.priority as keyof typeof priorityOrder] ?? 1;
+        return aPri - bPri;
+      });
+      summary += sortedGoals.map(g => {
+        let line = `  └── ${g.name}`;
+        if (g.priority === 'critical') line += ' ⭐';
+        if (g.targetDate) line += ` (${g.targetDate})`;
+        return line;
+      }).join('\n');
+    }
+
+    // 7. Digital presence - only show user's own profiles (not external references)
     // Filter to profiles that are clearly owned by the user (strava athlete pages, personal sites, company sites)
     const userName = profileValues.name?.toLowerCase() || '';
     const ownedPlatforms = $platforms.filter(p => {
