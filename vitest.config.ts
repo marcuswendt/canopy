@@ -7,8 +7,9 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts'],
     exclude: ['node_modules', 'build', 'dist-electron'],
-    testTimeout: 30000, // 30s timeout for AI calls
-    hookTimeout: 30000,
+    testTimeout: 60000, // 60s timeout for AI calls
+    hookTimeout: 60000,
+    setupFiles: ['./src/lib/test/vitest-setup.ts'],
   },
   resolve: {
     alias: {

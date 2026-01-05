@@ -4,15 +4,18 @@
 export * from './provider';
 export { claudeProvider } from './providers/claude';
 
-import { registerProvider, setActiveProvider } from './provider';
+import { registerProvider, setActiveProvider, getProvider } from './provider';
 import { claudeProvider } from './providers/claude';
 
-// Register default providers
+// Register default providers (but don't override if test provider is already set)
+// This allows integration tests to register their provider before importing extraction functions
 registerProvider(claudeProvider);
-setActiveProvider('claude');
+if (!getProvider('test')) {
+  setActiveProvider('claude');
+}
 
 // Re-export commonly used functions with provider abstraction
-import { getProvider, isAIError } from './provider';
+import { isAIError } from './provider';
 import type { AIMessage, StreamCallbacks, CompletionOptions } from './provider';
 
 // Convenience wrappers that use the active provider

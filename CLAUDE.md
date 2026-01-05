@@ -39,3 +39,9 @@ Add Claude API, markdown, context management, and update all pages
 
 - Update docs/ when adding new systems
 - Keep README.md current with feature changes
+
+## Development Philosophy
+
+- **No legacy code** - We're in active development, delete unused code rather than maintaining backwards compatibility
+- **Refactor freely** - If something is messy, clean it up rather than working around it
+- **Remove over deprecate** - Don't mark things as deprecated, just remove them

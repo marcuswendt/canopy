@@ -31,6 +31,9 @@
   import { connectPlugin, pluginStates } from '$lib/integrations/registry';
   import StructuredInput, { type FieldConfig } from '$lib/components/StructuredInput.svelte';
   import MentionInput from '$lib/components/MentionInput.svelte';
+  import EntityCarousel from '$lib/components/onboarding/EntityCarousel.svelte';
+  import ConfirmationNotification from '$lib/components/onboarding/ConfirmationNotification.svelte';
+  import CompletionSummary from '$lib/components/onboarding/CompletionSummary.svelte';
 
   let messages = $state<{ role: 'ray' | 'user'; content: string }[]>([]);
   let messagesEl = $state<HTMLDivElement | null>(null);
@@ -93,6 +96,12 @@
 
   // Entities pending confirmation (companies/organisations that are ambiguous)
   let pendingConfirmations = $state<{ name: string; type: string; domain: string; description?: string }[]>([]);
+
+  // Carousel confirmation state
+  let showEntityCarousel = $state(false);
+  let carouselComplete = $state(false);
+  let recentlyAdded = $state<{ name: string; type: string }[]>([]);
+  let carouselConfirmedEntities = $state<{ name: string; type: string; domain?: string; relationship?: string }[]>([]);
 
   // Integration picker state
   let showIntegrationPicker = $state(false);
@@ -350,123 +359,20 @@
       return;
     }
 
-    // Store the extraction for use in Stage 2
+    // Store the extraction for use in carousel
     documentExtraction = extraction;
     console.log('Stage 1 complete:', extraction.entities.length, 'entities,', extraction.domains.length, 'domains');
 
-    // Process extracted domains immediately
-    const domainLabels: Record<string, string> = {
-      work: 'Work & Career',
-      family: 'Family & Home',
-      sport: 'Sport & Fitness',
-      personal: 'Personal Projects',
-      health: 'Health & Wellness'
-    };
-
-    for (const domain of extraction.domains) {
-      if (!domainExists(domain.type)) {
-        collectedDomains = [...collectedDomains, domain.type];
-        const created = await createEntity(
-          'domain',
-          domainLabels[domain.type] || domain.type,
-          domain.type as any
-        );
-        if (created?.id) {
-          await updateEntityMention(created.id);
-          existingEntities = [...existingEntities, created];
-        }
-        rayState.addDomain({
-          id: domain.type,
-          name: domainLabels[domain.type] || domain.type,
-          type: domain.type,
-          entities: [],
-        });
-      }
-    }
-
-    // Process extracted entities
-    for (const entity of extraction.entities) {
-      if (!entityExists(entity.name)) {
-        if (entity.needsConfirmation) {
-          const alreadyPending = pendingConfirmations.some(
-            p => normalizeName(p.name) === normalizeName(entity.name)
-          );
-          if (!alreadyPending) {
-            pendingConfirmations = [...pendingConfirmations, {
-              name: entity.name,
-              type: entity.type,
-              domain: entity.domain,
-              description: entity.description
-            }];
-          }
-          continue;
-        }
-
-        collectedEntities = [...collectedEntities, entity];
-        const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept' | 'goal' | 'focus'> = {
-          person: 'person',
-          project: 'project',
-          company: 'project',
-          event: 'event',
-          goal: 'goal',
-          focus: 'focus',
-        };
-        let description = entity.description || entity.relationship || '';
-        if (entity.type === 'goal' || entity.type === 'focus') {
-          const parts: string[] = [];
-          if (entity.priority) parts.push(`Priority: ${entity.priority}`);
-          if (entity.date) parts.push(`Target: ${entity.date}`);
-          if (description) parts.push(description);
-          description = parts.join(' | ');
-        } else if (entity.type === 'event' && entity.date) {
-          description = entity.date + (description ? ` | ${description}` : '');
-        }
-        const created = await createEntity(
-          typeMap[entity.type] || 'project',
-          entity.name,
-          entity.domain as any,
-          description
-        );
-        if (created?.id) {
-          await updateEntityMention(created.id);
-          existingEntities = [...existingEntities, created];
-        }
-      }
-    }
-
-    // STAGE 2: Generate conversational response using extracted data
-    const context: OnboardingContext = {
-      messages: messages,
-      collected: {
-        domains: collectedDomains,
-        entities: collectedEntities,
-        urls: collectedUrls,
-        integrations: connectedIntegrations,
-        userName: profileValues.name,
-        location: profileValues.location,
-      },
-      documentExtraction: extraction, // Pass structured extraction, not raw content
-      availableIntegrations: availableIntegrations.map(i => ({
-        id: i.id,
-        name: i.name,
-        description: i.description,
-      })),
-      offeredIntegrations: offeredIntegrations,
-      connectedIntegrations: connectedIntegrations,
-    };
-
-    // Get AI response that acknowledges the extracted content
-    const response = await generateOnboardingResponse(context);
-
     isProcessing = false;
 
-    // Show AI's response (skip the "Processing..." message replacement)
-    addRayMessage(response.response);
-
-    // Check if onboarding is complete
-    if (response.isComplete) {
-      await new Promise(r => setTimeout(r, 600));
-      await finishOnboardingWithSummary();
+    // Show confirmation message and launch carousel
+    const totalItems = extraction.entities.length + extraction.domains.length;
+    if (totalItems > 0) {
+      addRayMessage(`I found ${totalItems} things in your document. Let's confirm what to add to your Canopy.`);
+      await new Promise(r => setTimeout(r, 400));
+      showEntityCarousel = true;
+    } else {
+      addRayMessage("I couldn't find specific entities in that document. Could you tell me more about yourself?");
     }
   }
 
@@ -595,6 +501,34 @@
         fetchUrlInBackground(url, platform.id, scope);
         if (!collectedUrls.includes(url)) {
           collectedUrls = [...collectedUrls, url];
+        }
+      }
+    }
+
+    // For long text inputs (likely pasted documents), run Stage 1 extraction first
+    // This ensures comprehensive documents get proper structured extraction
+    if (input.length > 500 && !documentExtraction) {
+      console.log('Long input detected, running Stage 1 document extraction...');
+      const extraction = await extractFromOnboardingDocument(input, 'pasted-content');
+      if (extraction) {
+        documentExtraction = extraction;
+        console.log('Stage 1 complete:', extraction.entities.length, 'entities,', extraction.domains.length, 'domains');
+
+        // Also populate collected data from extraction
+        for (const domain of extraction.domains) {
+          if (!collectedDomains.includes(domain.type)) {
+            collectedDomains = [...collectedDomains, domain.type];
+          }
+        }
+        for (const entity of extraction.entities) {
+          if (!collectedEntities.some(e => e.name.toLowerCase() === entity.name.toLowerCase())) {
+            collectedEntities = [...collectedEntities, {
+              name: entity.name,
+              type: entity.type,
+              domain: entity.domain,
+              description: entity.description,
+            }];
+          }
         }
       }
     }
@@ -984,6 +918,96 @@
     pendingConfirmations = [];
   }
 
+  // Carousel event handlers
+  async function handleCarouselConfirm(entity: { name: string; type: string; domain: string; description?: string; relationship?: string; priority?: string; date?: string }) {
+    // Add to recently added for notification
+    recentlyAdded = [...recentlyAdded, { name: entity.name, type: entity.type }];
+
+    // Create the entity in the database
+    const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept' | 'goal' | 'focus' | 'domain'> = {
+      person: 'person',
+      project: 'project',
+      company: 'project',
+      event: 'event',
+      goal: 'goal',
+      focus: 'focus',
+      domain: 'domain',
+    };
+
+    // Build description based on entity type
+    let description = entity.description || entity.relationship || '';
+    if (entity.type === 'goal' || entity.type === 'focus') {
+      const parts: string[] = [];
+      if (entity.priority) parts.push(`Priority: ${entity.priority}`);
+      if (entity.date) parts.push(`Target: ${entity.date}`);
+      if (description) parts.push(description);
+      description = parts.join(' | ');
+    } else if (entity.type === 'event' && entity.date) {
+      description = entity.date + (description ? ` | ${description}` : '');
+    }
+
+    // Handle domain entities specially
+    if (entity.type === 'domain') {
+      const domainLabels: Record<string, string> = {
+        work: 'Work & Career',
+        family: 'Family & Home',
+        sport: 'Sport & Fitness',
+        personal: 'Personal Projects',
+        health: 'Health & Wellness'
+      };
+      const created = await createEntity(
+        'domain',
+        domainLabels[entity.name] || entity.name,
+        entity.name as any
+      );
+      if (created?.id) {
+        await updateEntityMention(created.id);
+        existingEntities = [...existingEntities, created];
+      }
+      if (!collectedDomains.includes(entity.name)) {
+        collectedDomains = [...collectedDomains, entity.name];
+      }
+      rayState.addDomain({
+        id: entity.name,
+        name: domainLabels[entity.name] || entity.name,
+        type: entity.name as 'work' | 'family' | 'sport' | 'personal' | 'health',
+        entities: [],
+      });
+    } else {
+      const created = await createEntity(
+        typeMap[entity.type] || 'project',
+        entity.name,
+        (entity.domain || 'personal') as any,
+        description
+      );
+      if (created?.id) {
+        await updateEntityMention(created.id);
+        existingEntities = [...existingEntities, created];
+        collectedEntities = [...collectedEntities, entity];
+      }
+    }
+
+    // Track in carousel confirmed list
+    carouselConfirmedEntities = [...carouselConfirmedEntities, {
+      name: entity.name,
+      type: entity.type,
+      domain: entity.domain,
+      relationship: entity.relationship,
+    }];
+  }
+
+  function handleCarouselComplete() {
+    showEntityCarousel = false;
+    carouselComplete = true;
+  }
+
+  async function handleCompletionContinue() {
+    carouselComplete = false;
+    carouselConfirmedEntities = [];
+    recentlyAdded = [];
+    await finishOnboardingWithSummary();
+  }
+
   async function finishOnboardingWithSummary() {
     // Build structured summary from collected data
     let summary = '';
@@ -1218,60 +1242,22 @@
         {/if}
       </div>
 
-      <!-- Pending Focus Confirmations (interpretive themes) -->
-      {#if pendingConfirmations.filter(p => p.type === 'focus').length > 0}
-        {@const pendingFocuses = pendingConfirmations.filter(p => p.type === 'focus')}
-        <div class="pending-confirmations focus-confirmations">
-          <div class="pending-header">
-            <span>I noticed these themes in what you shared:</span>
-            <div class="pending-actions">
-              <button class="text-btn" onclick={() => pendingFocuses.forEach(f => confirmPendingEntity(f))}>Yes, all correct</button>
-              <button class="text-btn muted" onclick={() => pendingFocuses.forEach(f => rejectPendingEntity(f.name))}>Not quite</button>
-            </div>
-          </div>
-          <div class="pending-list">
-            {#each pendingFocuses as entity (entity.name)}
-              <div class="pending-entity focus-entity">
-                <div class="focus-content">
-                  <span class="entity-name">{entity.name}</span>
-                  {#if entity.description}
-                    <span class="focus-description">{entity.description}</span>
-                  {/if}
-                </div>
-                <div class="entity-actions">
-                  <button class="confirm-btn" onclick={() => confirmPendingEntity(entity)} title="Yes">✓</button>
-                  <button class="reject-btn" onclick={() => rejectPendingEntity(entity.name)} title="No">✗</button>
-                </div>
-              </div>
-            {/each}
-          </div>
-        </div>
+      <!-- Entity Carousel Confirmation -->
+      {#if showEntityCarousel && documentExtraction}
+        <EntityCarousel
+          extractedEntities={documentExtraction.entities}
+          extractedDomains={documentExtraction.domains}
+          onConfirm={handleCarouselConfirm}
+          onComplete={handleCarouselComplete}
+        />
       {/if}
 
-      <!-- Pending Organisation Confirmations -->
-      {#if pendingConfirmations.filter(p => p.type !== 'focus').length > 0}
-        {@const pendingOrgs = pendingConfirmations.filter(p => p.type !== 'focus')}
-        <div class="pending-confirmations">
-          <div class="pending-header">
-            <span>Confirm these organisations?</span>
-            <div class="pending-actions">
-              <button class="text-btn" onclick={() => pendingOrgs.forEach(o => confirmPendingEntity(o))}>Add all</button>
-              <button class="text-btn muted" onclick={() => pendingOrgs.forEach(o => rejectPendingEntity(o.name))}>Skip all</button>
-            </div>
-          </div>
-          <div class="pending-list">
-            {#each pendingOrgs as entity (entity.name)}
-              <div class="pending-entity">
-                <span class="entity-name">{entity.name}</span>
-                <span class="entity-type">{entity.type}</span>
-                <div class="entity-actions">
-                  <button class="confirm-btn" onclick={() => confirmPendingEntity(entity)} title="Add">✓</button>
-                  <button class="reject-btn" onclick={() => rejectPendingEntity(entity.name)} title="Skip">✗</button>
-                </div>
-              </div>
-            {/each}
-          </div>
-        </div>
+      <!-- Completion Summary -->
+      {#if carouselComplete}
+        <CompletionSummary
+          confirmedEntities={carouselConfirmedEntities}
+          onContinue={handleCompletionContinue}
+        />
       {/if}
 
       <!-- Input or Start Button -->
@@ -1423,6 +1409,9 @@
       {/if}
     {/if}
   </div>
+
+  <!-- Confirmation Notification Toast -->
+  <ConfirmationNotification {recentlyAdded} />
 </div>
 
 <style>
