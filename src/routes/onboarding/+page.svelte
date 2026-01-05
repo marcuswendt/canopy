@@ -1,22 +1,24 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { rayState, needsOnboarding } from '$lib/coach/store';
+  import { rayState, needsOnboarding, rayStateLoaded } from '$lib/coach/store';
+  import { get } from 'svelte/store';
   import { RAY_VOICE, type OnboardingPhase, getPersonalGreeting } from '$lib/coach/ray';
-  import { createEntity } from '$lib/db/client';
+  import { createEntity, updateEntityMention, getEntities } from '$lib/db/client';
   import { loadEntities } from '$lib/stores/entities';
+  import type { Entity } from '$lib/db/types';
   import { persona, platforms, syncAllPlatforms } from '$lib/persona/store';
   import { hasApiKey } from '$lib/ai';
   import { userSettings, guessLocation } from '$lib/stores/settings';
   import {
-    extractDomains as aiExtractDomains,
-    extractWorkEntities as aiExtractWorkEntities,
-    extractFamilyEntities as aiExtractFamilyEntities,
-    extractEvents as aiExtractEvents,
-    extractHealthEntities as aiExtractHealthEntities,
-    extractIntegrations as aiExtractIntegrations,
-    type ExtractedEntity
+    generateOnboardingResponse,
+    extractFromUrl,
+    type OnboardingContext,
+    type OnboardingResponse
   } from '$lib/ai/extraction';
+
+  // URL regex for detecting links in user input
+  const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/gi;
   import PlatformInput from '$lib/components/PlatformInput.svelte';
   import FileDropZone from '$lib/components/FileDropZone.svelte';
   import UploadedFiles from '$lib/components/UploadedFiles.svelte';
@@ -26,12 +28,14 @@
   import { getAvailableIntegrations } from '$lib/integrations/init';
   import { connectPlugin, pluginStates } from '$lib/integrations/registry';
   import StructuredInput, { type FieldConfig } from '$lib/components/StructuredInput.svelte';
+  import MentionInput from '$lib/components/MentionInput.svelte';
 
   let messages = $state<{ role: 'ray' | 'user'; content: string }[]>([]);
   let messagesEl = $state<HTMLDivElement | null>(null);
   let inputValue = $state('');
   let isProcessing = $state(false);
-  let currentPhase = $state<'api-setup' | OnboardingPhase>('api-setup');
+  // Simplified phases: api-setup → welcome → profile → conversation → complete
+  let currentPhase = $state<'api-setup' | 'welcome' | 'profile' | 'conversation' | 'complete'>('api-setup');
   let showFileUpload = $state(false);
   let showPlatformInput = $state(false);
 
@@ -53,9 +57,39 @@
     { id: 'location', label: 'Where are you based?', placeholder: 'City, Country' }
   ];
 
-  // Extracted data during onboarding
-  let extractedDomains = $state<string[]>([]);
-  let extractedEntities = $state<{ name: string; type: string; domain: string; description?: string; priority?: string }[]>([]);
+  // Collected data during onboarding (AI-driven)
+  let collectedDomains = $state<string[]>([]);
+  let collectedEntities = $state<{ name: string; type: string; domain: string; description?: string; relationship?: string }[]>([]);
+  let collectedUrls = $state<string[]>([]);
+
+  // Existing entities from database (for duplicate detection)
+  let existingEntities = $state<Entity[]>([]);
+
+  // Normalize name for duplicate detection (case-insensitive, trim, collapse spaces)
+  function normalizeName(name: string): string {
+    return name.toLowerCase().trim().replace(/\s+/g, ' ');
+  }
+
+  // Check if an entity with this name already exists
+  function entityExists(name: string): boolean {
+    const normalized = normalizeName(name);
+    // Check both existing DB entities and newly collected entities
+    const inDb = existingEntities.some(e => normalizeName(e.name) === normalized);
+    const inCollected = collectedEntities.some(e => normalizeName(e.name) === normalized);
+    return inDb || inCollected;
+  }
+
+  // Check if a domain already exists
+  function domainExists(type: string): boolean {
+    // Check in existingEntities for domain-type entities
+    const inDb = existingEntities.some(e => e.type === 'domain' && e.domain === type);
+    // Check in collectedDomains
+    const inCollected = collectedDomains.includes(type);
+    return inDb || inCollected;
+  }
+
+  // Entities pending confirmation (companies/organisations that are ambiguous)
+  let pendingConfirmations = $state<{ name: string; type: string; domain: string; description?: string }[]>([]);
 
   // Integration picker state
   let showIntegrationPicker = $state(false);
@@ -67,6 +101,25 @@
   let showFileDropZone = $state(false);
   let voiceError = $state('');
 
+  // Track integrations: what's been offered and what's connected
+  let offeredIntegrations = $state<string[]>([]);
+  let pendingIntegration = $state<string | null>(null); // Integration suggested by AI, waiting to show
+
+  // Filter which integrations to show (null = show all)
+  let integrationFilter = $state<string[] | null>(null);
+
+  // Derived: integrations to display (filtered or all)
+  let displayedIntegrations = $derived(
+    integrationFilter
+      ? availableIntegrations.filter(i => integrationFilter!.includes(i.id))
+      : availableIntegrations
+  );
+
+  // Derived: connected integrations
+  let connectedIntegrations = $derived(
+    [...$pluginStates.entries()].filter(([, state]) => state?.connected).map(([id]) => id)
+  );
+
   onMount(async () => {
     // Guess location from system timezone
     guessedLocation = guessLocation();
@@ -77,6 +130,24 @@
     if (!isElectron) {
       profileValues = { ...profileValues, location: guessedLocation };
       checkingApiKey = false;
+      return;
+    }
+
+    // Wait for ray state to load from persistence
+    if (!get(rayStateLoaded)) {
+      await new Promise<void>(resolve => {
+        const unsubscribe = rayStateLoaded.subscribe(loaded => {
+          if (loaded) {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
+    }
+
+    // If onboarding is already complete, redirect to chat
+    if (!get(needsOnboarding)) {
+      goto('/chat');
       return;
     }
 
@@ -95,14 +166,15 @@
     checkingApiKey = false;
 
     if (hasKey) {
-      // If we have a saved profile, skip to domains
+      // Load existing entities for duplicate detection
+      existingEntities = await getEntities();
+
+      // If we have a saved profile, skip to conversation
       if (savedSettings.userName) {
-        currentPhase = 'domains';
+        currentPhase = 'conversation';
         const displayName = savedSettings.nickname || savedSettings.userName;
         const greeting = getPersonalGreeting(displayName, savedSettings.location);
-        addRayMessage(`${greeting}\n\nWelcome back. Let's continue where we left off.`);
-        await new Promise(r => setTimeout(r, 400));
-        addRayMessage(RAY_VOICE.onboarding.askDomains);
+        addRayMessage(`${greeting}\n\nWelcome back. Let's continue where we left off.\n\nWhat are the main areas of your life that take your attention? Work, family, fitness, side projects...`);
       } else {
         // No saved profile, start fresh
         currentPhase = 'welcome';
@@ -128,6 +200,8 @@
 
     try {
       await window.canopy!.setSecret('claude_api_key', apiKeyInput);
+      // Load existing entities for duplicate detection
+      existingEntities = await getEntities();
       currentPhase = 'welcome';
       addRayMessage(RAY_VOICE.onboarding.welcome);
     } catch (e) {
@@ -198,21 +272,96 @@
       if (upload.extracted?.entities && upload.extracted.entities.length > 0) {
         // Add extracted entities to our list
         for (const entity of upload.extracted.entities) {
-          const exists = extractedEntities.some(e =>
+          const exists = collectedEntities.some(e =>
             e.name.toLowerCase() === entity.name.toLowerCase()
           );
           if (!exists) {
-            extractedEntities = [...extractedEntities, {
+            collectedEntities = [...collectedEntities, {
               name: entity.name,
               type: entity.type,
               domain: entity.domain || 'personal',
-              description: entity.details?.description,
+              description: entity.details?.description as string | undefined,
             }];
           }
         }
       }
     }
   });
+
+  // Track URLs that have been fetched and their extracted context
+  let fetchedUrlContexts = $state<Map<string, { title?: string; summary?: string; entities?: string[] }>>(new Map());
+
+  /**
+   * Fetch URL content in background and extract context
+   * This runs asynchronously so it doesn't block the conversation
+   * Uses Electron's ability to fetch without CORS restrictions when available
+   */
+  async function fetchUrlInBackground(url: string, platformId: string, scope: 'work' | 'personal') {
+    try {
+      let content: string | null = null;
+
+      // Try fetching via Electron IPC if available (no CORS restrictions)
+      if (window.canopy?.fetchUrl) {
+        content = await window.canopy.fetchUrl(url);
+      } else {
+        // Fallback to direct fetch (may fail due to CORS)
+        try {
+          const response = await fetch(url, { mode: 'cors' });
+          if (response.ok) {
+            content = await response.text();
+          }
+        } catch {
+          // CORS blocked - that's fine, we'll sync later
+        }
+      }
+
+      if (content) {
+        // Extract information using AI
+        const extracted = await extractFromUrl(content, url);
+
+        if (extracted) {
+          // Store the context
+          fetchedUrlContexts.set(url, {
+            title: extracted.title,
+            summary: extracted.summary,
+            entities: extracted.entities?.map(e => e.name),
+          });
+
+          // Update persona with extracted profile info
+          if (extracted.title || extracted.summary) {
+            persona.setPlatformProfile(platformId, {
+              name: extracted.title || url,
+              bio: extracted.summary,
+              url,
+            });
+          }
+
+          // Add extracted entities to our knowledge
+          if (extracted.entities) {
+            for (const entity of extracted.entities) {
+              const exists = collectedEntities.some(e =>
+                e.name.toLowerCase() === entity.name.toLowerCase()
+              );
+              if (!exists) {
+                collectedEntities = [...collectedEntities, {
+                  name: entity.name,
+                  type: entity.type,
+                  domain: entity.domain || scope,
+                  description: entity.source ? `From ${entity.source}` : undefined,
+                }];
+              }
+            }
+          }
+
+          console.log(`Extracted context from ${url}:`, extracted.title);
+        }
+      } else {
+        console.log(`Added ${url} to persona - will sync content later`);
+      }
+    } catch (error) {
+      console.log(`Added ${url} to persona - will sync content later`);
+    }
+  }
 
   async function handleSubmit() {
     if (!inputValue.trim() || isProcessing) return;
@@ -229,395 +378,171 @@
   }
 
   async function processInput(input: string) {
-    // Simulate processing delay
-    await new Promise(r => setTimeout(r, 600));
+    // Handle conversation phase with AI-driven approach
+    if (currentPhase === 'conversation') {
+      await processConversation(input);
+      return;
+    }
 
-    switch (currentPhase) {
-      case 'welcome':
-        // Move to domains
-        currentPhase = 'domains';
-        addRayMessage(RAY_VOICE.onboarding.askDomains);
-        break;
+    // Handle completion - redirect to chat
+    if (currentPhase === 'complete') {
+      goto(`/chat?q=${encodeURIComponent(input)}`);
+      return;
+    }
 
-      case 'domains':
-        // Extract domains from input using AI
-        const newDomains = await aiExtractDomains(input);
+    // Default: move from welcome to profile
+    if (currentPhase === 'welcome') {
+      currentPhase = 'profile';
+      addRayMessage(RAY_VOICE.onboarding.askProfile(guessedLocation));
+    }
+  }
 
-        if (newDomains.length > 0) {
-          // Add to existing domains (accumulate across messages)
-          extractedDomains = [...extractedDomains, ...newDomains];
-
-          // IMPORTANT: Save domains immediately - never lose client data
-          for (const domain of newDomains) {
-            const type = domain.toLowerCase().includes('work') || domain.toLowerCase().includes('field') || domain.toLowerCase().includes('studio') || domain.toLowerCase().includes('company') ? 'work' :
-                         domain.toLowerCase().includes('family') || domain.toLowerCase().includes('kids') || domain.toLowerCase().includes('wife') || domain.toLowerCase().includes('husband') || domain.toLowerCase().includes('partner') ? 'family' :
-                         domain.toLowerCase().includes('train') || domain.toLowerCase().includes('sport') || domain.toLowerCase().includes('racing') || domain.toLowerCase().includes('cycling') || domain.toLowerCase().includes('running') || domain.toLowerCase().includes('fitness') ? 'sport' :
-                         domain.toLowerCase().includes('health') || domain.toLowerCase().includes('wellness') ? 'health' :
-                         'personal';
-            rayState.addDomain({
-              id: domain.toLowerCase().replace(/\s+/g, '-'),
-              name: domain,
-              type,
-              entities: [],
-            });
-          }
-
-          // Check which key life areas we're still missing
-          const domainTypes = extractedDomains.map(d => {
-            const lower = d.toLowerCase();
-            if (lower.includes('work') || lower.includes('field') || lower.includes('studio') || lower.includes('company') || lower.includes('job') || lower.includes('career')) return 'work';
-            if (lower.includes('family') || lower.includes('kids') || lower.includes('wife') || lower.includes('husband') || lower.includes('partner') || lower.includes('children')) return 'family';
-            if (lower.includes('train') || lower.includes('sport') || lower.includes('racing') || lower.includes('cycling') || lower.includes('running') || lower.includes('fitness') || lower.includes('gym')) return 'sport';
-            if (lower.includes('health') || lower.includes('wellness') || lower.includes('mental')) return 'health';
-            return 'personal';
-          });
-
-          const hasWork = domainTypes.includes('work');
-          const hasFamily = domainTypes.includes('family');
-          const hasSportOrHealth = domainTypes.includes('sport') || domainTypes.includes('health');
-          const hasPersonal = domainTypes.includes('personal');
-
-          // Check if user just mentioned sport/health in this message
-          const justAddedSportHealth = newDomains.some(d => {
-            const lower = d.toLowerCase();
-            return lower.includes('train') || lower.includes('sport') || lower.includes('racing') ||
-                   lower.includes('cycling') || lower.includes('running') || lower.includes('fitness') ||
-                   lower.includes('gym') || lower.includes('health') || lower.includes('wellness');
-          });
-
-          // Acknowledge what we got with a warm response
-          addRayMessage(`Got it: ${newDomains.join(', ')}.`);
-          await new Promise(r => setTimeout(r, 600));
-
-          // Prompt for missing key areas with warmer, conversational tone
-          if (!hasFamily) {
-            addRayMessage("What about family and friends? Who's closest to you—partner, kids, parents?");
-          } else if (!hasSportOrHealth) {
-            addRayMessage("How about your health or fitness? Any goals you're working toward, or ways you stay active?");
-          } else if (justAddedSportHealth && availableIntegrations.some(i => i.id === 'whoop')) {
-            // User just mentioned fitness/health - offer WHOOP integration
-            addRayMessage("Good moment to mention—I can connect with WHOOP to understand your recovery and readiness. Want to set that up now?");
-            showIntegrationPicker = true;
-            // Pre-select WHOOP
-            selectedIntegrations = ['whoop'];
-          } else if (!hasPersonal && extractedDomains.length < 4) {
-            addRayMessage("What do you do in your free time? What are your passions and favourite activities?");
-          } else {
-            // We have a good picture - finish up
-            addRayMessage(`Great—here's your life as I understand it:\n\n${extractedDomains.map(d => `  ◆ ${d}`).join('\n')}\n\nLet's get started! What's on your mind right now?`);
-            // Complete onboarding
-            rayState.completeOnboarding();
-            await loadEntities();
-            currentPhase = 'complete';
-          }
-        } else {
-          // Check if user is saying "that's it" or similar
-          const doneIndicators = ['that\'s it', 'thats it', 'that\'s all', 'nothing else', 'no', 'nope', 'done', 'move on', 'next', 'skip'];
-          if (doneIndicators.some(d => input.toLowerCase().includes(d)) && extractedDomains.length > 0) {
-            addRayMessage(`Great—here's your life as I understand it:\n\n${extractedDomains.map(d => `  ◆ ${d}`).join('\n')}\n\nLet's get started! What's on your mind right now?`);
-            rayState.completeOnboarding();
-            await loadEntities();
-            currentPhase = 'complete';
-          } else {
-            addRayMessage("I didn't quite catch that. What are the main areas of your life? For example: work, family, fitness...");
-          }
+  /**
+   * AI-driven conversation flow
+   * Single function that handles all onboarding conversation intelligently
+   */
+  async function processConversation(input: string) {
+    // Extract URLs and add to persona (before AI call)
+    const detectedUrls = input.match(URL_REGEX) || [];
+    for (const url of detectedUrls) {
+      const isWorkContext = /work|company|studio|business|job|career|field\.io/i.test(input);
+      const scope = isWorkContext ? 'work' : 'personal';
+      const platform = persona.addPlatform(url, scope);
+      if (platform) {
+        fetchUrlInBackground(url, platform.id, scope);
+        if (!collectedUrls.includes(url)) {
+          collectedUrls = [...collectedUrls, url];
         }
-        break;
+      }
+    }
 
-      case 'domain-highlights':
-        // Extract any entities mentioned at a high level (people, projects, events)
-        const allEntities = await Promise.all([
-          aiExtractWorkEntities(input),
-          aiExtractFamilyEntities(input),
-          aiExtractEvents(input),
-        ]);
-        const flatEntities = allEntities.flat();
+    // Build context for AI
+    const context: OnboardingContext = {
+      messages: messages,
+      collected: {
+        domains: collectedDomains,
+        entities: collectedEntities,
+        urls: collectedUrls,
+        integrations: connectedIntegrations,
+        userName: profileValues.name,
+        location: profileValues.location,
+      },
+      availableIntegrations: availableIntegrations.map(i => ({
+        id: i.id,
+        name: i.name,
+        description: i.description,
+      })),
+      offeredIntegrations: offeredIntegrations,
+      connectedIntegrations: connectedIntegrations,
+    };
 
-        if (flatEntities.length > 0) {
-          extractedEntities = flatEntities.map(e => ({
-            name: e.name,
-            type: e.type,
-            domain: e.domain,
-            description: e.description || e.relationship,
-            priority: e.priority,
-          }));
+    // Get AI response
+    const response = await generateOnboardingResponse(context);
 
-          // IMPORTANT: Save entities immediately - never lose client data
-          for (const entity of flatEntities) {
-            const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept'> = {
-              person: 'person',
-              project: 'project',
-              event: 'event',
-              company: 'project',
-              default: 'project',
-            };
-            await createEntity(
-              typeMap[entity.type] || 'project',
-              entity.name,
-              entity.domain as any,
-              entity.description || entity.relationship
+    // Update collected data from AI extraction
+    if (response.extractedDomains && response.extractedDomains.length > 0) {
+      for (const domain of response.extractedDomains) {
+        // Check if this domain type already exists
+        if (!domainExists(domain.type)) {
+          collectedDomains = [...collectedDomains, domain.type];
+
+          // Create a domain entity in the database
+          const domainLabels: Record<string, string> = {
+            work: 'Work',
+            family: 'Family',
+            sport: 'Sport & Fitness',
+            personal: 'Personal',
+            health: 'Health'
+          };
+          const created = await createEntity(
+            'domain',
+            domainLabels[domain.type] || domain.type,
+            domain.type as any
+          );
+          if (created?.id) {
+            await updateEntityMention(created.id);
+            // Add to existingEntities so we don't create duplicates
+            existingEntities = [...existingEntities, created];
+          }
+
+          // Also save to Ray state
+          rayState.addDomain({
+            id: domain.type,
+            name: domainLabels[domain.type] || domain.type,
+            type: domain.type,
+            entities: [],
+          });
+        }
+      }
+    }
+
+    if (response.extractedEntities && response.extractedEntities.length > 0) {
+      for (const entity of response.extractedEntities) {
+        // Check against both database and in-memory entities
+        if (!entityExists(entity.name)) {
+          // If entity needs confirmation (ambiguous company/org), add to pending list
+          if (entity.needsConfirmation) {
+            const alreadyPending = pendingConfirmations.some(
+              p => normalizeName(p.name) === normalizeName(entity.name)
             );
+            if (!alreadyPending) {
+              pendingConfirmations = [...pendingConfirmations, {
+                name: entity.name,
+                type: entity.type,
+                domain: entity.domain,
+                description: entity.description
+              }];
+            }
+            continue; // Don't auto-create, wait for confirmation
           }
 
-          const names = flatEntities.slice(0, 5).map(e => e.name).join(', ');
-          addRayMessage(`Noted: ${names}${flatEntities.length > 5 ? ` and ${flatEntities.length - 5} more` : ''}. I'll remember these.`);
-        } else {
-          addRayMessage("Got it. We can fill in the details as we go.");
-        }
-
-        await new Promise(r => setTimeout(r, 600));
-        currentPhase = 'integrations';
-        addRayMessage(RAY_VOICE.onboarding.askIntegrations);
-        break;
-
-      case 'work-details':
-        // Extract work entities using AI
-        const workEntities = await aiExtractWorkEntities(input);
-        const mappedWorkEntities = workEntities.map(e => ({
-          name: e.name,
-          type: e.type,
-          domain: e.domain,
-          description: e.description,
-          priority: e.priority
-        }));
-        extractedEntities = [...extractedEntities, ...mappedWorkEntities];
-
-        // Acknowledge and ask follow-up or move on
-        if (mappedWorkEntities.length > 0) {
-          const names = mappedWorkEntities.map(e => e.name).join(', ');
-          addRayMessage(`Got it: ${names}. ${mappedWorkEntities.find(e => e.priority) ? `I'll keep ${mappedWorkEntities.find(e => e.priority)?.name} flagged as high-attention.` : ''}`);
-        }
-
-        await new Promise(r => setTimeout(r, 600));
-
-        // Move to family if it exists
-        if (extractedDomains.some(d => d.toLowerCase().includes('family'))) {
-          currentPhase = 'family-details';
-          addRayMessage(RAY_VOICE.onboarding.askFamilyDetails);
-        } else if (extractedDomains.some(d => d.toLowerCase().includes('training') || d.toLowerCase().includes('sport') || d.toLowerCase().includes('racing'))) {
-          currentPhase = 'health-details';
-          addRayMessage(RAY_VOICE.onboarding.askHealthDetails);
-        } else {
-          currentPhase = 'integrations';
-          addRayMessage(RAY_VOICE.onboarding.askIntegrations);
-        }
-        break;
-
-      case 'family-details':
-        // Extract family members using AI
-        const familyEntities = await aiExtractFamilyEntities(input);
-        const mappedFamilyEntities = familyEntities.map(e => ({
-          name: e.name,
-          type: e.type,
-          domain: e.domain,
-          description: e.relationship || e.description,
-        }));
-        extractedEntities = [...extractedEntities, ...mappedFamilyEntities];
-
-        if (mappedFamilyEntities.length > 0) {
-          const names = mappedFamilyEntities.map(e => e.name).join(', ');
-          addRayMessage(`Beautiful. ${mappedFamilyEntities.length} people: ${names}.`);
-
-          await new Promise(r => setTimeout(r, 600));
-          addRayMessage("Any family events coming up I should know about?");
-          currentPhase = 'family-events';
-        } else {
-          currentPhase = 'health-details';
-          addRayMessage(RAY_VOICE.onboarding.askHealthDetails);
-        }
-        break;
-
-      case 'family-events':
-        // Extract events using AI
-        const events = await aiExtractEvents(input);
-        if (events.length > 0) {
-          for (const event of events) {
-            extractedEntities.push({
-              name: event.name,
-              type: 'event',
-              domain: event.domain || 'family',
-              description: event.date || event.description,
-              priority: event.priority === 'critical' ? 'non-negotiable' : undefined,
-            });
-          }
-          addRayMessage(`Marked. ${events[0].name} — I'll factor that into anything we discuss.`);
-        }
-
-        await new Promise(r => setTimeout(r, 600));
-
-        if (extractedDomains.some(d => d.toLowerCase().includes('training') || d.toLowerCase().includes('sport') || d.toLowerCase().includes('racing'))) {
-          currentPhase = 'health-details';
-          addRayMessage("For your racing/training—what's the goal you're working toward?");
-        } else {
-          currentPhase = 'integrations';
-          addRayMessage(RAY_VOICE.onboarding.askIntegrations);
-        }
-        break;
-
-      case 'health-details':
-        // Extract health/fitness goals using AI
-        const healthEntities = await aiExtractHealthEntities(input);
-        const mappedHealthEntities = healthEntities.map(e => ({
-          name: e.name,
-          type: e.type,
-          domain: e.domain,
-          description: e.description,
-        }));
-        extractedEntities = [...extractedEntities, ...mappedHealthEntities];
-
-        if (mappedHealthEntities.length > 0) {
-          addRayMessage(`Added ${mappedHealthEntities[0].name} as your target.`);
-        }
-
-        await new Promise(r => setTimeout(r, 600));
-        currentPhase = 'integrations';
-        addRayMessage(RAY_VOICE.onboarding.askIntegrations);
-        break;
-
-      case 'integrations':
-        // Note mentioned integrations using AI
-        const integrations = await aiExtractIntegrations(input);
-        for (const integration of integrations) {
-          rayState.markIntegrationMentioned(integration as any);
-          // Pre-select mentioned integrations
-          if (availableIntegrations.some(a => a.id === integration) && !selectedIntegrations.includes(integration)) {
-            selectedIntegrations = [...selectedIntegrations, integration];
+          collectedEntities = [...collectedEntities, entity];
+          // Save to database immediately
+          const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept'> = {
+            person: 'person',
+            project: 'project',
+            company: 'project',
+            event: 'event',
+          };
+          const created = await createEntity(
+            typeMap[entity.type] || 'project',
+            entity.name,
+            entity.domain as any,
+            entity.description || entity.relationship
+          );
+          // Mark as mentioned so it shows up with a "last active" timestamp
+          if (created?.id) {
+            await updateEntityMention(created.id);
+            // Add to existingEntities so we don't create duplicates in the same session
+            existingEntities = [...existingEntities, created];
           }
         }
+      }
+    }
 
-        await new Promise(r => setTimeout(r, 400));
+    // Show Ray's response
+    addRayMessage(response.response);
 
-        // Show integration picker
-        if (availableIntegrations.length > 0) {
-          showIntegrationPicker = true;
-          addRayMessage("Here are some integrations I can connect to. Pick any that would be useful, or skip if you'd rather set them up later.");
-        } else {
-          // No integrations available, move to persona
-          currentPhase = 'persona';
-          showPlatformInput = true;
-          addRayMessage(RAY_VOICE.onboarding.askPersona);
-        }
-        break;
-
-      case 'persona':
-        // User responded to persona question
-        // If they added platforms via UI, we're already done
-        // If they typed something, check if it's a URL
-        if (input.includes('.') && (input.includes('instagram') || input.includes('strava') || input.includes('linkedin') || input.includes('http'))) {
-          persona.addPlatform(input);
-        }
-
-        const platformCount = $platforms.length;
-        if (platformCount > 0) {
-          addRayMessage(RAY_VOICE.onboarding.confirmPersona(platformCount));
-          // Start syncing in background
-          syncAllPlatforms();
-        }
-
+    // Handle integration suggestion from AI
+    if (response.suggestIntegration && !offeredIntegrations.includes(response.suggestIntegration)) {
+      const integration = availableIntegrations.find(i => i.id === response.suggestIntegration);
+      if (integration) {
+        offeredIntegrations = [...offeredIntegrations, response.suggestIntegration];
         await new Promise(r => setTimeout(r, 600));
-        showPlatformInput = false;
-        currentPhase = 'review';
-        await finishOnboarding();
-        break;
-
-      case 'review':
-        // User confirmed, complete onboarding
-        await saveAndComplete();
-        break;
-
-      case 'complete':
-        // Onboarding is done - redirect to chat with their first question
-        goto(`/chat?q=${encodeURIComponent(input)}`);
-        break;
-    }
-  }
-
-  function skipPersona() {
-    showPlatformInput = false;
-    currentPhase = 'review';
-    finishOnboarding();
-  }
-
-  function continueFromPersona() {
-    const platformCount = $platforms.length;
-    if (platformCount > 0) {
-      addRayMessage(RAY_VOICE.onboarding.confirmPersona(platformCount));
-      syncAllPlatforms();
-    }
-    showPlatformInput = false;
-    currentPhase = 'review';
-    finishOnboarding();
-  }
-
-  async function finishOnboarding() {
-    // Generate summary
-    let summary = '';
-
-    // Group by domain
-    const workEntities = extractedEntities.filter(e => e.domain === 'work');
-    const familyEntities = extractedEntities.filter(e => e.domain === 'family');
-    const sportEntities = extractedEntities.filter(e => e.domain === 'sport');
-    const personalEntities = extractedEntities.filter(e => e.domain === 'personal');
-
-    if (workEntities.length > 0) {
-      summary += '◆ Work\n';
-      for (const e of workEntities) {
-        summary += `   └── ${e.name}${e.priority ? ` (${e.priority})` : ''}\n`;
-      }
-      summary += '\n';
-    }
-
-    if (familyEntities.length > 0) {
-      summary += '♡ Family\n';
-      for (const e of familyEntities) {
-        summary += `   └── ${e.name}${e.description ? ` — ${e.description}` : ''}\n`;
-      }
-      summary += '\n';
-    }
-
-    if (sportEntities.length > 0) {
-      summary += '🚴 Sport\n';
-      for (const e of sportEntities) {
-        summary += `   └── ${e.name}\n`;
-      }
-      summary += '\n';
-    }
-
-    if (personalEntities.length > 0) {
-      summary += '◇ Personal\n';
-      for (const e of personalEntities) {
-        summary += `   └── ${e.name}\n`;
-      }
-      summary += '\n';
-    }
-
-    // Add connected platforms
-    if ($platforms.length > 0) {
-      summary += '🌐 Digital Presence\n';
-      for (const p of $platforms) {
-        const scopeIcon = p.scope === 'work' ? '💼' : '👤';
-        summary += `   └── ${p.profile?.name || p.handle} ${scopeIcon}\n`;
+        addRayMessage(`I can connect with ${integration.name} to factor that data into our conversations. Want to set that up?`);
+        showIntegrationPicker = true;
+        integrationFilter = [response.suggestIntegration];
+        selectedIntegrations = [response.suggestIntegration];
       }
     }
 
-    addRayMessage(RAY_VOICE.onboarding.review(summary));
+    // Check if onboarding is complete
+    if (response.isComplete && !showIntegrationPicker) {
+      await new Promise(r => setTimeout(r, 600));
+      await finishOnboardingWithSummary();
+    }
   }
 
-  async function saveAndComplete() {
-    // Domains and entities are already saved incrementally during onboarding
-    // Just complete and reload
-
-    // Complete onboarding
-    rayState.completeOnboarding();
-
-    // Reload entities so they appear in sidebar
-    await loadEntities();
-
-    addRayMessage("Perfect. I'm ready to help. What's on your mind?");
-
-    // Navigate to home after a moment
-    setTimeout(() => goto('/'), 1500);
-  }
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -664,8 +589,8 @@
 
     await new Promise(r => setTimeout(r, 600));
 
-    // Move to domains
-    currentPhase = 'domains';
+    // Move to AI-driven conversation
+    currentPhase = 'conversation';
     addRayMessage(RAY_VOICE.onboarding.askDomains);
     isProcessing = false;
   }
@@ -679,8 +604,9 @@
   function restartOnboarding() {
     // Reset all state
     messages = [];
-    extractedDomains = [];
-    extractedEntities = [];
+    collectedDomains = [];
+    collectedEntities = [];
+    collectedUrls = [];
     profileValues = {
       name: '',
       nickname: '',
@@ -691,6 +617,9 @@
     showPlatformInput = false;
     showIntegrationPicker = false;
     selectedIntegrations = [];
+    integrationFilter = null;
+    offeredIntegrations = [];
+    pendingIntegration = null;
 
     // Reset Ray state (clears domains, marks onboarding incomplete)
     rayState.reset();
@@ -724,6 +653,7 @@
 
     connectingIntegrations = false;
     showIntegrationPicker = false;
+    integrationFilter = null;
 
     if (selectedIntegrations.length > 0) {
       const names = selectedIntegrations.map(id =>
@@ -732,52 +662,157 @@
       addRayMessage(`Connected: ${names}. I'll factor this data into my suggestions.`);
     }
 
-    await new Promise(r => setTimeout(r, 600));
+    // Clear selection for next time
+    selectedIntegrations = [];
 
-    // Continue with domain collection or finish
-    await continueAfterIntegrations();
+    // Continue the conversation - AI will decide what to ask next
+    // (User will type their next message)
   }
 
   function skipIntegrations() {
     showIntegrationPicker = false;
-    addRayMessage("No problem, you can always connect these later in Settings.");
-
-    // Continue with domain collection or finish
-    setTimeout(() => continueAfterIntegrations(), 600);
+    integrationFilter = null;
+    selectedIntegrations = [];
+    addRayMessage("No problem, you can always connect these later in Settings. What else should I know about your life?");
+    // Continue the conversation - user will type their next message
   }
 
-  async function continueAfterIntegrations() {
-    // Check if we still need to ask about passions/hobbies
-    const domainTypes = extractedDomains.map(d => {
-      const lower = d.toLowerCase();
-      if (lower.includes('work') || lower.includes('field') || lower.includes('studio') || lower.includes('company')) return 'work';
-      if (lower.includes('family') || lower.includes('kids') || lower.includes('wife') || lower.includes('husband') || lower.includes('partner')) return 'family';
-      if (lower.includes('train') || lower.includes('sport') || lower.includes('racing') || lower.includes('cycling') || lower.includes('running') || lower.includes('fitness')) return 'sport';
-      if (lower.includes('health') || lower.includes('wellness')) return 'health';
-      return 'personal';
+  // Confirm a pending entity (create it in the database)
+  async function confirmPendingEntity(entity: { name: string; type: string; domain: string; description?: string }) {
+    // Remove from pending
+    pendingConfirmations = pendingConfirmations.filter(p => p.name !== entity.name);
+
+    // Create the entity
+    const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept'> = {
+      person: 'person',
+      project: 'project',
+      company: 'project',
+      event: 'event',
+    };
+    const created = await createEntity(
+      typeMap[entity.type] || 'project',
+      entity.name,
+      entity.domain as any,
+      entity.description
+    );
+    if (created?.id) {
+      await updateEntityMention(created.id);
+      existingEntities = [...existingEntities, created];
+      collectedEntities = [...collectedEntities, entity];
+    }
+  }
+
+  // Reject a pending entity (don't create it)
+  function rejectPendingEntity(entityName: string) {
+    pendingConfirmations = pendingConfirmations.filter(p => p.name !== entityName);
+  }
+
+  // Confirm all pending entities
+  async function confirmAllPending() {
+    for (const entity of pendingConfirmations) {
+      await confirmPendingEntity(entity);
+    }
+    pendingConfirmations = [];
+  }
+
+  // Reject all pending entities
+  function rejectAllPending() {
+    pendingConfirmations = [];
+  }
+
+  async function finishOnboardingWithSummary() {
+    // Build structured summary from collected data
+    let summary = '';
+
+    // 1. Life Spaces/Domains - use clean type labels from rayState
+    const currentState = get(rayState);
+    const domains = currentState.lifeContext?.domains || [];
+    if (domains.length > 0) {
+      // Group by type and show clean labels
+      const domainLabels: Record<string, string> = {
+        work: 'Work',
+        family: 'Family',
+        sport: 'Sport & Fitness',
+        personal: 'Personal & Side Projects',
+        health: 'Health'
+      };
+      summary += '**Spaces:**\n';
+      // Deduplicate by type
+      const seenTypes = new Set<string>();
+      const uniqueDomains = domains.filter(d => {
+        if (seenTypes.has(d.type)) return false;
+        seenTypes.add(d.type);
+        return true;
+      });
+      summary += uniqueDomains.map(d => `  ◆ ${domainLabels[d.type] || d.type}`).join('\n');
+    }
+
+    // 2. People (filter by type='person')
+    const people = collectedEntities.filter(e => e.type === 'person');
+    if (people.length > 0) {
+      summary += '\n\n**People:**\n';
+      summary += people.map(p =>
+        `  └── ${p.name}${p.relationship ? ` (${p.relationship})` : ''}`
+      ).join('\n');
+    }
+
+    // 3. Projects (filter by type='project' or 'company')
+    const projects = collectedEntities.filter(e => e.type === 'project' || e.type === 'company');
+    if (projects.length > 0) {
+      summary += '\n\n**Projects:**\n';
+      summary += projects.map(p => {
+        const domainLabel = p.domain === 'work' ? 'work' : p.domain === 'personal' ? 'side' : p.domain;
+        return `  └── ${p.name}${domainLabel ? ` (${domainLabel})` : ''}`;
+      }).join('\n');
+    }
+
+    // 4. Events (filter by type='event')
+    const events = collectedEntities.filter(e => e.type === 'event');
+    if (events.length > 0) {
+      summary += '\n\n**Upcoming:**\n';
+      summary += events.slice(0, 5).map(e => `  └── ${e.name}`).join('\n');
+    }
+
+    // 5. Digital presence - only show user's own profiles (not external references)
+    // Filter to profiles that are clearly owned by the user (strava athlete pages, personal sites, company sites)
+    const userName = profileValues.name?.toLowerCase() || '';
+    const ownedPlatforms = $platforms.filter(p => {
+      // Strava athlete profile is user's own
+      if (p.type === 'strava' && p.url.includes('/athletes/')) return true;
+      // LinkedIn profile is user's own
+      if (p.type === 'linkedin') return true;
+      // Instagram profile is user's own
+      if (p.type === 'instagram') return true;
+      // Personal website containing user's name
+      if (p.url.toLowerCase().includes(userName.split(' ')[0]?.toLowerCase() || '')) return true;
+      // Company websites mentioned as "work" scope are likely user's company
+      if (p.scope === 'work' && (p.type === 'website' || p.type === 'portfolio')) return true;
+      return false;
     });
 
-    const hasPersonal = domainTypes.includes('personal');
-
-    if (!hasPersonal && extractedDomains.length < 4) {
-      // Ask about passions/hobbies
-      currentPhase = 'domains';
-      addRayMessage("What do you do in your free time? What are your passions and favourite activities?");
-    } else {
-      // We have a good picture - finish up
-      addRayMessage(`Great—here's your life as I understand it:\n\n${extractedDomains.map(d => `  ◆ ${d}`).join('\n')}\n\nLet's get started! What's on your mind right now?`);
-      rayState.completeOnboarding();
-      await loadEntities();
-      currentPhase = 'complete';
+    if (ownedPlatforms.length > 0) {
+      summary += '\n\n**Connected profiles:**\n';
+      summary += ownedPlatforms.map(p => `  └── ${p.profile?.name || p.handle || new URL(p.url).hostname}`).join('\n');
     }
+
+    addRayMessage(`Here's your life as I understand it:\n\n${summary}\n\nReady when you are. What's on your mind?`);
+    rayState.completeOnboarding();
+    await loadEntities();
+    currentPhase = 'complete';
   }
 
 </script>
 
 <div class="onboarding-container" id="onboarding">
   <div class="onboarding-content">
-    <!-- Header with logo and restart -->
+    <!-- Header with logo and actions -->
     <div class="onboarding-header">
+      <a href="/settings" class="settings-link" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </a>
       <div class="logo">
         <span class="logo-icon">🌿</span>
       </div>
@@ -789,6 +824,8 @@
         >
           ↻
         </button>
+      {:else}
+        <div class="header-spacer"></div>
       {/if}
     </div>
 
@@ -876,6 +913,31 @@
         {/if}
       </div>
 
+      <!-- Pending Entity Confirmations -->
+      {#if pendingConfirmations.length > 0}
+        <div class="pending-confirmations">
+          <div class="pending-header">
+            <span>Confirm these organisations?</span>
+            <div class="pending-actions">
+              <button class="text-btn" onclick={confirmAllPending}>Add all</button>
+              <button class="text-btn muted" onclick={rejectAllPending}>Skip all</button>
+            </div>
+          </div>
+          <div class="pending-list">
+            {#each pendingConfirmations as entity (entity.name)}
+              <div class="pending-entity">
+                <span class="entity-name">{entity.name}</span>
+                <span class="entity-type">{entity.type}</span>
+                <div class="entity-actions">
+                  <button class="confirm-btn" onclick={() => confirmPendingEntity(entity)} title="Add">✓</button>
+                  <button class="reject-btn" onclick={() => rejectPendingEntity(entity.name)} title="Skip">✗</button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
       <!-- Input or Start Button -->
       {#if currentPhase === 'welcome' && messages.length === 1}
         <div class="actions">
@@ -901,7 +963,7 @@
       {:else if showIntegrationPicker}
         <div class="integration-picker">
           <div class="integration-cards">
-            {#each availableIntegrations as integration (integration.id)}
+            {#each displayedIntegrations as integration (integration.id)}
               <button
                 class="integration-card"
                 class:selected={selectedIntegrations.includes(integration.id)}
@@ -947,14 +1009,13 @@
             Data from integrations stays on your device and helps Ray understand your context better.
           </p>
         </div>
-      {:else if currentPhase !== 'review' || messages[messages.length - 1]?.content.includes('ready to help')}
+      {:else}
         <!-- Multi-modal input area -->
         <div class="multimodal-input">
           {#if showFileDropZone}
             <div class="file-upload-area">
               <FileDropZone
-                acceptedTypes={['image/*', 'application/pdf', '.doc', '.docx', '.txt']}
-                maxFiles={10}
+                maxFiles={20}
                 onfilesAdded={handleFilesAdded}
               />
               <button class="close-upload-btn" onclick={toggleFileDropZone}>
@@ -981,12 +1042,11 @@
               </svg>
             </button>
 
-            <input
-              type="text"
-              placeholder="Type, speak, or drop files..."
+            <MentionInput
               bind:value={inputValue}
-              onkeydown={handleKeydown}
+              placeholder="Type, speak, or drop files..."
               disabled={isProcessing}
+              onsubmit={handleSubmit}
             />
 
             <VoiceInput
@@ -1008,29 +1068,6 @@
             You can type, use voice, or drop photos and documents
           </p>
         </div>
-      {:else if currentPhase === 'persona'}
-        <div class="persona-input-area">
-          <PlatformInput onplatformAdded={(detail) => console.log('Added:', detail)} />
-
-          <div class="persona-actions">
-            <button class="primary-btn" onclick={continueFromPersona}>
-              {$platforms.length > 0 ? 'Continue' : 'Skip for now'}
-            </button>
-          </div>
-
-          <p class="privacy-note">
-            {RAY_VOICE.onboarding.personaPrivacy}
-          </p>
-        </div>
-      {:else}
-        <div class="actions">
-          <button class="primary-btn" onclick={saveAndComplete}>
-            Looks good
-          </button>
-          <button class="secondary-btn" onclick={() => { currentPhase = 'domains'; }}>
-            Let me adjust
-          </button>
-        </div>
       {/if}
     {/if}
   </div>
@@ -1044,10 +1081,10 @@
     justify-content: center;
     background: linear-gradient(
       180deg,
-      #87ceeb 0%,
-      #98d4a4 30%,
-      #4a7c59 60%,
-      #2d5a3d 100%
+      var(--gradient-sky) 0%,
+      var(--gradient-mid) 30%,
+      var(--gradient-low) 60%,
+      var(--gradient-ground) 100%
     );
     padding: var(--space-xl);
   }
@@ -1059,10 +1096,10 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-lg);
-    background: rgba(255, 255, 255, 0.95);
+    background: var(--card-bg);
     padding: var(--space-xl);
     border-radius: var(--radius-lg);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 8px 32px var(--card-shadow);
     animation: slideUp 0.5s ease-out forwards;
     overflow-y: auto;
   }
@@ -1105,6 +1142,34 @@
     background: var(--bg-secondary);
     color: var(--text-primary);
     transform: translateY(-50%) rotate(180deg);
+  }
+
+  .settings-link {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    border-radius: var(--radius-full);
+    transition: all var(--transition-fast);
+    opacity: 0.6;
+  }
+
+  .settings-link:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    opacity: 1;
+  }
+
+  .header-spacer {
+    width: 32px;
+    position: absolute;
+    right: 0;
   }
 
   /* API Setup Styles */
@@ -1359,6 +1424,7 @@
 
   .input-area {
     display: flex;
+    align-items: flex-end;
     gap: var(--space-sm);
     animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
     animation-delay: 0.1s;
@@ -1612,5 +1678,113 @@
     color: var(--text-muted);
     text-align: center;
     margin: 0;
+  }
+
+  /* Pending confirmations */
+  .pending-confirmations {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md);
+    margin-bottom: var(--space-md);
+    animation: fieldIn 0.3s ease forwards;
+  }
+
+  .pending-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-sm);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .pending-actions {
+    display: flex;
+    gap: var(--space-sm);
+  }
+
+  .text-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 4px 8px;
+  }
+
+  .text-btn:hover {
+    text-decoration: underline;
+  }
+
+  .text-btn.muted {
+    color: var(--text-muted);
+  }
+
+  .pending-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .pending-entity {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+  }
+
+  .entity-name {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+
+  .entity-type {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 2px 6px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+  }
+
+  .entity-actions {
+    display: flex;
+    gap: 4px;
+  }
+
+  .confirm-btn, .reject-btn {
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .confirm-btn {
+    background: var(--accent-muted);
+    color: var(--accent);
+  }
+
+  .confirm-btn:hover {
+    background: var(--accent);
+    color: white;
+  }
+
+  .reject-btn {
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+  }
+
+  .reject-btn:hover {
+    background: var(--error-bg);
+    color: var(--error);
   }
 </style>
