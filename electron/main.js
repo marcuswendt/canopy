@@ -938,3 +938,93 @@ Important:
 ipcMain.handle('claude:hasApiKey', () => {
   return !!getClaudeApiKey();
 });
+
+// ============ Weather API (Open-Meteo, no API key needed) ============
+
+// Cache weather for 30 minutes
+let weatherCache = { data: null, timestamp: 0, location: null };
+const WEATHER_CACHE_MS = 30 * 60 * 1000;
+
+ipcMain.handle('weather:get', async (event, { location }) => {
+  // Check cache
+  if (
+    weatherCache.data &&
+    weatherCache.location === location &&
+    Date.now() - weatherCache.timestamp < WEATHER_CACHE_MS
+  ) {
+    return weatherCache.data;
+  }
+
+  try {
+    // First, geocode the location
+    const geoResponse = await fetch(
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1`
+    );
+
+    if (!geoResponse.ok) {
+      return { error: 'Failed to geocode location' };
+    }
+
+    const geoData = await geoResponse.json();
+    if (!geoData.results || geoData.results.length === 0) {
+      return { error: 'Location not found' };
+    }
+
+    const { latitude, longitude, name, country } = geoData.results[0];
+
+    // Fetch weather
+    const weatherResponse = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m&timezone=auto`
+    );
+
+    if (!weatherResponse.ok) {
+      return { error: 'Failed to fetch weather' };
+    }
+
+    const weatherData = await weatherResponse.json();
+    const current = weatherData.current;
+
+    // Map weather codes to descriptions
+    const weatherDescriptions = {
+      0: 'clear sky',
+      1: 'mainly clear',
+      2: 'partly cloudy',
+      3: 'overcast',
+      45: 'foggy',
+      48: 'foggy',
+      51: 'light drizzle',
+      53: 'drizzle',
+      55: 'heavy drizzle',
+      61: 'light rain',
+      63: 'rain',
+      65: 'heavy rain',
+      71: 'light snow',
+      73: 'snow',
+      75: 'heavy snow',
+      80: 'rain showers',
+      81: 'rain showers',
+      82: 'heavy rain showers',
+      95: 'thunderstorm',
+      96: 'thunderstorm with hail',
+      99: 'thunderstorm with heavy hail',
+    };
+
+    const result = {
+      location: `${name}, ${country}`,
+      temperature: Math.round(current.temperature_2m),
+      feelsLike: Math.round(current.apparent_temperature),
+      humidity: current.relative_humidity_2m,
+      windSpeed: Math.round(current.wind_speed_10m),
+      condition: weatherDescriptions[current.weather_code] || 'unknown',
+      weatherCode: current.weather_code,
+    };
+
+    // Update cache
+    weatherCache = { data: result, timestamp: Date.now(), location };
+
+    return result;
+  } catch (error) {
+    console.error('Weather fetch error:', error);
+    return { error: error.message };
+  }
+});

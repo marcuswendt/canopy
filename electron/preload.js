@@ -112,4 +112,7 @@ contextBridge.exposeInMainWorld('canopy', {
       ipcRenderer.removeAllListeners('claude:stream:error');
     },
   },
+
+  // ============ Weather ============
+  getWeather: (location) => ipcRenderer.invoke('weather:get', { location }),
 });
