@@ -4,6 +4,8 @@
 import { extract, stream, isError, type AIMessage, type StreamCallbacks } from './index';
 import type { Entity } from '$lib/db/types';
 import type { ExtractedContent, EntitySuggestion } from '$lib/uploads';
+import { get } from 'svelte/store';
+import { recentTime, recentWeather, recentRecovery } from '$lib/integrations/registry';
 
 // =============================================================================
 // SCHEMAS
@@ -294,6 +296,78 @@ Time of day: ${getTimeOfDay()}`;
   return context;
 }
 
+/**
+ * Build context from plugin signals
+ * Uses time, weather, and health signals from the plugin system
+ */
+export function buildPluginContext(userName?: string): {
+  temporal: string;
+  weather?: string;
+  capacity?: string;
+} {
+  const result: { temporal: string; weather?: string; capacity?: string } = {
+    temporal: '',
+  };
+
+  // Time context from time plugin
+  const timeSignal = get(recentTime);
+  if (timeSignal) {
+    const t = timeSignal.data as {
+      formattedTime: string;
+      dayOfWeek: string;
+      date: string;
+      timezone: string;
+      timeOfDay: string;
+    };
+    result.temporal = `Current time: ${t.dayOfWeek}, ${t.date} at ${t.formattedTime}
+Timezone: ${t.timezone}
+Time of day: ${t.timeOfDay}`;
+    if (userName) {
+      result.temporal += `\nUser's name: ${userName}`;
+    }
+  } else {
+    // Fallback to direct calculation
+    result.temporal = getTemporalContext(userName);
+  }
+
+  // Weather context from weather plugin
+  const weatherSignal = get(recentWeather);
+  if (weatherSignal) {
+    const w = weatherSignal.data as {
+      formatted?: string;
+      temperature: number;
+      condition: string;
+      windSpeed: number;
+    };
+    if (w.formatted) {
+      result.weather = w.formatted;
+    } else {
+      let weather = `${w.temperature}°C, ${w.condition}`;
+      if (w.windSpeed > 15) {
+        weather += `, windy (${w.windSpeed} km/h)`;
+      }
+      result.weather = weather;
+    }
+  }
+
+  // Capacity context from WHOOP plugin (if connected)
+  const recoverySignal = get(recentRecovery);
+  if (recoverySignal) {
+    const r = recoverySignal.data as {
+      recoveryScore?: number;
+      hrvStatus?: string;
+    };
+    if (r.recoveryScore !== undefined) {
+      result.capacity = `Recovery: ${r.recoveryScore}%`;
+      if (r.hrvStatus) {
+        result.capacity += ` (${r.hrvStatus})`;
+      }
+    }
+  }
+
+  return result;
+}
+
 export function generateChatResponse(
   query: string,
   context: {
@@ -303,19 +377,36 @@ export function generateChatResponse(
     location?: string;
     userName?: string;
     weather?: string; // Formatted weather string e.g. "24°C, partly cloudy"
+    usePluginContext?: boolean; // Use plugin signals for time/weather/capacity
   },
   callbacks: StreamCallbacks
 ): { streamId: string; cancel: () => void } {
   // Build context section
   let contextSection = '\n\n--- CURRENT CONTEXT ---\n';
-  contextSection += getTemporalContext(context.userName) + '\n';
+
+  // Get context from plugins or use provided values
+  const pluginCtx = context.usePluginContext !== false ? buildPluginContext(context.userName) : null;
+
+  // Time context (prefer plugin, fall back to direct)
+  if (pluginCtx) {
+    contextSection += pluginCtx.temporal + '\n';
+  } else {
+    contextSection += getTemporalContext(context.userName) + '\n';
+  }
 
   if (context.location) {
     contextSection += `Location: ${context.location}\n`;
   }
 
-  if (context.weather) {
-    contextSection += `Weather: ${context.weather}\n`;
+  // Weather context (prefer explicit, then plugin)
+  const weather = context.weather || pluginCtx?.weather;
+  if (weather) {
+    contextSection += `Weather: ${weather}\n`;
+  }
+
+  // Capacity context from WHOOP (if connected)
+  if (pluginCtx?.capacity) {
+    contextSection += `${pluginCtx.capacity}\n`;
   }
 
   if (context.entities.length > 0) {

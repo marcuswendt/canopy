@@ -82,6 +82,31 @@ export interface Artifact {
   updated_at: string;
 }
 
+// Plugin state (persisted)
+export interface PluginStateRow {
+  plugin_id: string;
+  enabled: boolean;
+  connected: boolean;
+  last_sync: string | null;
+  settings: string | null; // JSON string
+  created_at: string;
+  updated_at: string;
+}
+
+// Signal row from database
+export interface SignalRow {
+  id: string;
+  source: string;
+  type: string;
+  timestamp: string;
+  domain: string | null;
+  entity_ids: string | null; // JSON
+  data: string; // JSON
+  capacity_impact: string | null; // JSON
+  processed: boolean;
+  created_at: string;
+}
+
 // Electron API interface (exposed via preload)
 export interface CanopyAPI {
   // Entities
@@ -188,6 +213,68 @@ export interface CanopyAPI {
     condition: string;
     weatherCode: number;
   } | { error: string }>;
+
+  // Plugin State
+  getPluginState: (pluginId: string) => Promise<PluginStateRow | null>;
+  setPluginState: (data: {
+    pluginId: string;
+    enabled?: boolean;
+    connected?: boolean;
+    lastSync?: string;
+    settings?: Record<string, unknown>;
+  }) => Promise<{ success: boolean }>;
+  getAllPluginStates: () => Promise<PluginStateRow[]>;
+
+  // Signals
+  addSignal: (data: {
+    id: string;
+    source: string;
+    type: string;
+    timestamp: string;
+    domain?: string;
+    entityIds?: string[];
+    data: Record<string, unknown>;
+    capacityImpact?: Record<string, unknown>;
+  }) => Promise<{ success: boolean }>;
+  addSignals: (signals: Array<{
+    id: string;
+    source: string;
+    type: string;
+    timestamp: string;
+    domain?: string;
+    entityIds?: string[];
+    data: Record<string, unknown>;
+    capacityImpact?: Record<string, unknown>;
+  }>) => Promise<{ success: boolean }>;
+  getSignals: (opts?: {
+    source?: string;
+    type?: string;
+    since?: string;
+    limit?: number;
+  }) => Promise<SignalRow[]>;
+  getLatestSignal: (source: string, type?: string) => Promise<SignalRow | null>;
+
+  // OAuth
+  oauth: {
+    start: (pluginId: string, config: {
+      authUrl: string;
+      clientId: string;
+      scopes: string[];
+      redirectUri?: string;
+      state?: string;
+    }) => Promise<{ code: string; state?: string }>;
+    exchange: (pluginId: string, code: string, config: {
+      tokenUrl: string;
+      clientId: string;
+      clientSecret?: string;
+      redirectUri?: string;
+    }) => Promise<{ success: boolean; error?: string }>;
+    refresh: (pluginId: string, config: {
+      tokenUrl: string;
+      clientId: string;
+      clientSecret?: string;
+    }) => Promise<{ success: boolean; accessToken?: string; error?: string }>;
+  };
 }
 
 // Extend Window interface
