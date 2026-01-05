@@ -59,6 +59,8 @@ export function getFallbackMessage(error: { code: string | number }): string {
   switch (error.code) {
     case 'NO_API_KEY':
       return "I need an API key to respond. You can add one in Settings.";
+    case 'NOT_ELECTRON':
+      return "Please run Canopy as a desktop app (npm run electron:dev).";
     case 429:
       return "I'm receiving too many requests right now. Please try again in a moment.";
     case 'NETWORK_ERROR':

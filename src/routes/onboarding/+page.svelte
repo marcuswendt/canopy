@@ -7,6 +7,7 @@
   import { loadEntities } from '$lib/stores/entities';
   import { persona, platforms, syncAllPlatforms } from '$lib/persona/store';
   import { hasApiKey } from '$lib/ai';
+  import { userSettings, guessLocation } from '$lib/stores/settings';
   import {
     extractDomains as aiExtractDomains,
     extractWorkEntities as aiExtractWorkEntities,
@@ -32,12 +33,32 @@
   let apiKeyInput = $state('');
   let apiKeyError = $state('');
   let checkingApiKey = $state(true);
+  let isElectron = $state(false);
+
+  // Profile state
+  let profileName = $state('');
+  let profileNickname = $state('');
+  let profileDob = $state('');
+  let profileLocation = $state('');
+  let guessedLocation = $state('');
 
   // Extracted data during onboarding
   let extractedDomains = $state<string[]>([]);
   let extractedEntities = $state<{ name: string; type: string; domain: string; description?: string; priority?: string }[]>([]);
 
   onMount(async () => {
+    // Guess location from system timezone
+    guessedLocation = guessLocation();
+    profileLocation = guessedLocation;
+
+    // Check if we're running in Electron
+    isElectron = typeof window !== 'undefined' && window.canopy?.setSecret !== undefined;
+
+    if (!isElectron) {
+      checkingApiKey = false;
+      return;
+    }
+
     // Check if API key is already configured
     const hasKey = await hasApiKey();
     checkingApiKey = false;
@@ -65,11 +86,7 @@
     isProcessing = true;
 
     try {
-      if (window.canopy?.setSecret) {
-        await window.canopy.setSecret('claude_api_key', apiKeyInput);
-      }
-      // In web dev mode (no canopy API), proceed anyway with mock responses
-      // Move to welcome phase
+      await window.canopy!.setSecret('claude_api_key', apiKeyInput);
       currentPhase = 'welcome';
       addRayMessage(RAY_VOICE.onboarding.welcome);
     } catch (e) {
@@ -427,8 +444,36 @@
   }
 
   function startOnboarding() {
+    currentPhase = 'profile';
+    addRayMessage(RAY_VOICE.onboarding.askProfile(guessedLocation));
+  }
+
+  async function saveProfile() {
+    if (!profileName.trim()) return;
+
+    isProcessing = true;
+
+    // Save to settings store
+    await userSettings.setUserName(profileName.trim());
+    if (profileNickname.trim()) {
+      await userSettings.setNickname(profileNickname.trim());
+    }
+    if (profileDob) {
+      await userSettings.setDateOfBirth(profileDob);
+    }
+    if (profileLocation.trim()) {
+      await userSettings.setLocation(profileLocation.trim());
+    }
+
+    const displayName = profileNickname.trim() || profileName.trim();
+    addRayMessage(RAY_VOICE.onboarding.confirmProfile(displayName, profileLocation.trim()));
+
+    await new Promise(r => setTimeout(r, 600));
+
+    // Move to domains
     currentPhase = 'domains';
     addRayMessage(RAY_VOICE.onboarding.askDomains);
+    isProcessing = false;
   }
 
   function skipOnboarding() {
@@ -452,6 +497,17 @@
         <div class="api-setup">
           <div class="typing">
             <span></span><span></span><span></span>
+          </div>
+        </div>
+      {:else if !isElectron}
+        <div class="api-setup">
+          <h2>Electron Required</h2>
+          <p class="api-description">
+            Canopy needs to run as a desktop app to securely store your API key and data.
+          </p>
+          <div class="electron-instructions">
+            <p>Run the Electron app:</p>
+            <code>npm run electron:dev</code>
           </div>
         </div>
       {:else}
@@ -528,6 +584,64 @@
           <button class="secondary-btn" onclick={skipOnboarding}>
             I'll explore on my own
           </button>
+        </div>
+      {:else if currentPhase === 'profile'}
+        <div class="profile-form">
+          <div class="profile-field">
+            <label for="profile-name">Your name <span class="required">*</span></label>
+            <input
+              id="profile-name"
+              type="text"
+              placeholder="Marcus"
+              bind:value={profileName}
+              disabled={isProcessing}
+            />
+          </div>
+
+          <div class="profile-field">
+            <label for="profile-nickname">Nickname <span class="optional">(optional)</span></label>
+            <input
+              id="profile-nickname"
+              type="text"
+              placeholder="What friends call you"
+              bind:value={profileNickname}
+              disabled={isProcessing}
+            />
+          </div>
+
+          <div class="profile-field">
+            <label for="profile-dob">Date of birth <span class="optional">(optional)</span></label>
+            <input
+              id="profile-dob"
+              type="date"
+              bind:value={profileDob}
+              disabled={isProcessing}
+            />
+          </div>
+
+          <div class="profile-field">
+            <label for="profile-location">Where are you based?</label>
+            <input
+              id="profile-location"
+              type="text"
+              placeholder="City, Country"
+              bind:value={profileLocation}
+              disabled={isProcessing}
+            />
+            {#if guessedLocation && profileLocation === guessedLocation}
+              <span class="location-hint">Based on your timezone</span>
+            {/if}
+          </div>
+
+          <div class="profile-actions">
+            <button
+              class="primary-btn"
+              onclick={saveProfile}
+              disabled={!profileName.trim() || isProcessing}
+            >
+              {isProcessing ? 'Saving...' : 'Continue'}
+            </button>
+          </div>
         </div>
       {:else if currentPhase !== 'review' || messages[messages.length - 1]?.content.includes('ready to help')}
         <div class="input-area">
@@ -678,6 +792,29 @@
 
   .api-help a:hover {
     text-decoration: underline;
+  }
+
+  .electron-instructions {
+    background: var(--bg-tertiary);
+    padding: var(--space-lg);
+    border-radius: var(--radius-md);
+    text-align: center;
+  }
+
+  .electron-instructions p {
+    margin: 0 0 var(--space-sm) 0;
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+
+  .electron-instructions code {
+    display: inline-block;
+    background: var(--bg-primary);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-sm);
+    font-family: monospace;
+    font-size: 14px;
+    color: var(--accent);
   }
 
   .messages {
@@ -866,5 +1003,64 @@
   @keyframes pulse {
     0%, 100% { opacity: 0.4; }
     50% { opacity: 1; }
+  }
+
+  /* Profile Form Styles */
+  .profile-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+
+  .profile-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .profile-field label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .profile-field .required {
+    color: #dc2626;
+  }
+
+  .profile-field .optional {
+    font-weight: 400;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .profile-field input {
+    padding: var(--space-md);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 15px;
+  }
+
+  .profile-field input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .profile-field input[type="date"] {
+    font-family: inherit;
+  }
+
+  .location-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .profile-actions {
+    display: flex;
+    justify-content: center;
+    margin-top: var(--space-sm);
   }
 </style>
