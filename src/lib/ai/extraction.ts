@@ -256,20 +256,65 @@ Response style:
 
 You have access to the user's entities and context. Use this to give personalized, relevant responses.`;
 
+/**
+ * Get time-appropriate greeting period
+ */
+function getTimeOfDay(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'morning';
+  if (hour < 17) return 'afternoon';
+  if (hour < 21) return 'evening';
+  return 'night';
+}
+
+/**
+ * Build temporal context string with current time info
+ */
+function getTemporalContext(userName?: string): string {
+  const now = new Date();
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+
+  let context = `Current time: ${formatter.format(now)}
+Timezone: ${timezone}
+Time of day: ${getTimeOfDay()}`;
+
+  if (userName) {
+    context += `\nUser's name: ${userName}`;
+  }
+
+  return context;
+}
+
 export function generateChatResponse(
   query: string,
   context: {
     entities: Entity[];
     memories?: string[];
     threadHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    location?: string;
+    userName?: string;
   },
   callbacks: StreamCallbacks
 ): { streamId: string; cancel: () => void } {
   // Build context section
-  let contextSection = '';
+  let contextSection = '\n\n--- CURRENT CONTEXT ---\n';
+  contextSection += getTemporalContext(context.userName) + '\n';
+
+  if (context.location) {
+    contextSection += `Location: ${context.location}\n`;
+  }
 
   if (context.entities.length > 0) {
-    contextSection += '\n\n--- USER CONTEXT ---\n';
+    contextSection += '\n--- USER CONTEXT ---\n';
     contextSection += 'Active entities:\n';
     for (const entity of context.entities.slice(0, 15)) {
       contextSection += `- ${entity.name} (${entity.type}, ${entity.domain})`;

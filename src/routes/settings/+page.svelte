@@ -3,6 +3,7 @@
   import { registry, allPlugins, pluginStates, syncPlugin, connectPlugin, disconnectPlugin, enablePlugin, disablePlugin } from '$lib/integrations/registry';
   import { whoopPlugin } from '$lib/integrations/whoop';
   import { hasApiKey } from '$lib/ai';
+  import { userSettings } from '$lib/stores/settings';
 
   // Claude API key state
   let apiKeyInput = $state('');
@@ -10,11 +11,35 @@
   let savingKey = $state(false);
   let keyMessage = $state('');
 
+  // Profile state
+  let userName = $state('');
+  let userLocation = $state('');
+  let profileMessage = $state('');
+
   // Register plugins on mount
   onMount(async () => {
     registry.register(whoopPlugin);
     hasKey = await hasApiKey();
+    await userSettings.load();
+    const settings = userSettings.get();
+    userName = settings.userName || '';
+    userLocation = settings.location || '';
   });
+
+  async function saveProfile() {
+    try {
+      if (userName.trim()) {
+        await userSettings.setUserName(userName.trim());
+      }
+      if (userLocation.trim()) {
+        await userSettings.setLocation(userLocation.trim());
+      }
+      profileMessage = 'Profile saved';
+      setTimeout(() => profileMessage = '', 2000);
+    } catch (error) {
+      profileMessage = 'Failed to save profile';
+    }
+  }
 
   async function saveApiKey() {
     if (!apiKeyInput.trim()) return;
@@ -245,7 +270,41 @@
         </div>
       </div>
     </section>
-    
+
+    <section class="settings-section">
+      <h2>Profile</h2>
+      <p class="section-desc">Help Ray personalize your experience</p>
+
+      <div class="profile-card">
+        <div class="profile-field">
+          <label for="userName">Your name</label>
+          <input
+            id="userName"
+            type="text"
+            bind:value={userName}
+            placeholder="Marcus"
+            class="profile-input"
+          />
+        </div>
+        <div class="profile-field">
+          <label for="userLocation">Location</label>
+          <input
+            id="userLocation"
+            type="text"
+            bind:value={userLocation}
+            placeholder="Auckland, New Zealand"
+            class="profile-input"
+          />
+        </div>
+        <div class="profile-actions">
+          <button class="save-profile-btn" onclick={saveProfile}>Save Profile</button>
+          {#if profileMessage}
+            <span class="profile-message">{profileMessage}</span>
+          {/if}
+        </div>
+      </div>
+    </section>
+
     <section class="settings-section">
       <h2>AI</h2>
       <p class="section-desc">Claude powers Ray's intelligence</p>
@@ -502,6 +561,74 @@
     background: var(--bg-tertiary);
     padding: 2px 6px;
     border-radius: var(--radius-sm);
+  }
+
+  /* Profile Section */
+  .profile-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+
+  .profile-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .profile-field label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .profile-input {
+    padding: var(--space-sm) var(--space-md);
+    font-size: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+  }
+
+  .profile-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .profile-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .profile-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    margin-top: var(--space-sm);
+  }
+
+  .save-profile-btn {
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .save-profile-btn:hover {
+    background: var(--accent-hover);
+  }
+
+  .profile-message {
+    font-size: 13px;
+    color: var(--domain-family);
   }
 
   /* API Key Section */

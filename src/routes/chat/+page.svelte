@@ -23,6 +23,7 @@
   import ArtifactPanel from '$lib/components/ArtifactPanel.svelte';
   import Markdown from '$lib/components/Markdown.svelte';
   import { loadArtifacts } from '$lib/stores/artifacts';
+  import { userSettings } from '$lib/stores/settings';
 
   let inputValue = $state('');
   let messages = $state<Message[]>([]);
@@ -35,14 +36,29 @@
   let explicitMentions = $state<Entity[]>([]);
   let mentionInputRef: MentionInput;
   let showArtifacts = $state(true);
+  let messagesContainer: HTMLDivElement;
+
+  // Auto-scroll to bottom when messages change
+  $effect(() => {
+    // Track dependencies
+    messages.length;
+    streamingContent;
+    // Scroll after DOM update
+    if (messagesContainer) {
+      requestAnimationFrame(() => {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      });
+    }
+  });
 
   // Context management state
   let threadSummary = $state<string | undefined>(undefined);
   let summaryUpToIndex = $state(0);
 
   onMount(async () => {
-    // Load artifacts for sidebar
+    // Load artifacts and user settings
     loadArtifacts();
+    userSettings.load();
     const query = $page.url.searchParams.get('q');
     const entityId = $page.url.searchParams.get('entity');
     const existingThreadId = $page.url.searchParams.get('thread');
@@ -142,11 +158,14 @@
 
     // Start streaming response
     streamingContent = '';
+    const settings = userSettings.get();
     activeStream = generateChatResponse(
       content,
       {
         entities: contextResult.entities,
         threadHistory: contextResult.messages,
+        userName: settings.userName,
+        location: settings.location,
       },
       {
         onDelta: (delta) => {
@@ -195,7 +214,7 @@
   
   <div class="chat-body">
     <div class="messages-area">
-      <div class="messages">
+      <div class="messages" bind:this={messagesContainer}>
         {#each messages as message}
           <div class="message {message.role}">
             {#if message.role === 'user'}
@@ -318,17 +337,27 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    background: var(--bg-primary);
+    background: linear-gradient(
+      180deg,
+      #87ceeb 0%,
+      #98d4a4 30%,
+      #4a7c59 60%,
+      #2d5a3d 100%
+    );
+    padding: var(--space-md);
+    padding-top: 40px;
+    gap: 0;
   }
-  
+
   .chat-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: var(--space-sm) var(--space-md);
-    padding-top: 44px;
     border-bottom: 1px solid var(--border);
     background: var(--bg-secondary);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    flex-shrink: 0;
   }
   
   .back-btn {
@@ -362,6 +391,9 @@
     flex: 1;
     display: flex;
     overflow: hidden;
+    background: var(--bg-primary);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    min-height: 0;
   }
   
   .messages-area {
