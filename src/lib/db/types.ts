@@ -177,6 +177,17 @@ export interface CanopyAPI {
   }) => Promise<Artifact>;
   deleteArtifact: (id: string) => Promise<{ success: boolean }>;
   getArtifactsForEntities: (entityIds: string[]) => Promise<Artifact[]>;
+
+  // Weather
+  getWeather: (location: string) => Promise<{
+    location: string;
+    temperature: number;
+    feelsLike: number;
+    humidity: number;
+    windSpeed: number;
+    condition: string;
+    weatherCode: number;
+  } | { error: string }>;
 }
 
 // Extend Window interface
