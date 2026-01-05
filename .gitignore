@@ -1,0 +1,26 @@
+node_modules
+.DS_Store
+
+# Build outputs
+build
+dist
+dist-electron
+.svelte-kit
+.vite
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editor
+.idea
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+Thumbs.db

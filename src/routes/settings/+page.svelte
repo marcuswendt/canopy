@@ -1,0 +1,421 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { registry, allPlugins, pluginStates, syncPlugin, connectPlugin, disconnectPlugin, enablePlugin, disablePlugin } from '$lib/integrations/registry';
+  import { whoopPlugin } from '$lib/integrations/whoop';
+
+  // Register plugins on mount
+  onMount(() => {
+    registry.register(whoopPlugin);
+  });
+
+  let syncing = $state<Set<string>>(new Set());
+  let connecting = $state<Set<string>>(new Set());
+  
+  async function handleConnect(pluginId: string) {
+    connecting = connecting.add(pluginId);
+    try {
+      await connectPlugin(pluginId);
+    } catch (error) {
+      console.error('Failed to connect:', error);
+    } finally {
+      connecting.delete(pluginId);
+      connecting = connecting;
+    }
+  }
+  
+  async function handleDisconnect(pluginId: string) {
+    await disconnectPlugin(pluginId);
+  }
+  
+  async function handleSync(pluginId: string) {
+    syncing = syncing.add(pluginId);
+    try {
+      await syncPlugin(pluginId);
+    } catch (error) {
+      console.error('Failed to sync:', error);
+    } finally {
+      syncing.delete(pluginId);
+      syncing = syncing;
+    }
+  }
+  
+  function formatLastSync(dateStr: string | null): string {
+    if (!dateStr) return 'Never';
+    const date = new Date(dateStr);
+    const diff = Date.now() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return `${days}d ago`;
+  }
+  
+  // Group plugins by domain
+  let healthPlugins = $derived($allPlugins.filter(p => p.domains.includes('health') || p.domains.includes('sport')));
+  let workPlugins = $derived($allPlugins.filter(p => p.domains.includes('work')));
+</script>
+
+<div class="settings-page">
+  <header class="settings-header">
+    <h1>Settings</h1>
+  </header>
+  
+  <div class="settings-content">
+    <section class="settings-section">
+      <h2>Integrations</h2>
+      <p class="section-desc">Connect services to enrich your attention data</p>
+      
+      {#if healthPlugins.length > 0}
+        <div class="plugin-group">
+          <h3>Health & Fitness</h3>
+          
+          {#each healthPlugins as plugin (plugin.id)}
+            {@const state = $pluginStates.get(plugin.id)}
+            <div class="plugin-card" class:connected={state?.connected}>
+              <div class="plugin-icon">{plugin.icon}</div>
+              
+              <div class="plugin-info">
+                <div class="plugin-name">{plugin.name}</div>
+                <div class="plugin-description">{plugin.description}</div>
+                {#if state?.connected && state.lastSync}
+                  <div class="plugin-status">
+                    Last sync: {formatLastSync(state.lastSync)}
+                    {#if state.lastError}
+                      <span class="error">· Error</span>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+              
+              <div class="plugin-actions">
+                {#if state?.connected}
+                  <button
+                    class="sync-btn"
+                    onclick={() => handleSync(plugin.id)}
+                    disabled={syncing.has(plugin.id)}
+                  >
+                    {syncing.has(plugin.id) ? 'Syncing...' : 'Sync'}
+                  </button>
+                  <button
+                    class="disconnect-btn"
+                    onclick={() => handleDisconnect(plugin.id)}
+                  >
+                    Disconnect
+                  </button>
+                {:else}
+                  <button
+                    class="connect-btn"
+                    onclick={() => handleConnect(plugin.id)}
+                    disabled={connecting.has(plugin.id)}
+                  >
+                    {connecting.has(plugin.id) ? 'Connecting...' : 'Connect'}
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      
+      {#if workPlugins.length > 0}
+        <div class="plugin-group">
+          <h3>Work</h3>
+          
+          {#each workPlugins as plugin (plugin.id)}
+            {@const state = $pluginStates.get(plugin.id)}
+            <div class="plugin-card" class:connected={state?.connected}>
+              <div class="plugin-icon">{plugin.icon}</div>
+              
+              <div class="plugin-info">
+                <div class="plugin-name">{plugin.name}</div>
+                <div class="plugin-description">{plugin.description}</div>
+              </div>
+              
+              <div class="plugin-actions">
+                <button class="connect-btn" disabled>
+                  Coming Soon
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      
+      <!-- Placeholder plugins -->
+      <div class="plugin-group">
+        <h3>Coming Soon</h3>
+        
+        <div class="plugin-card placeholder">
+          <div class="plugin-icon">🟠</div>
+          <div class="plugin-info">
+            <div class="plugin-name">Strava</div>
+            <div class="plugin-description">Activities, routes, training</div>
+          </div>
+          <div class="plugin-actions">
+            <button class="connect-btn" disabled>Coming Soon</button>
+          </div>
+        </div>
+        
+        <div class="plugin-card placeholder">
+          <div class="plugin-icon">🏕</div>
+          <div class="plugin-info">
+            <div class="plugin-name">Basecamp</div>
+            <div class="plugin-description">Projects, tasks, messages</div>
+          </div>
+          <div class="plugin-actions">
+            <button class="connect-btn" disabled>Coming Soon</button>
+          </div>
+        </div>
+        
+        <div class="plugin-card placeholder">
+          <div class="plugin-icon">📝</div>
+          <div class="plugin-info">
+            <div class="plugin-name">Notion</div>
+            <div class="plugin-description">Databases, pages, wikis</div>
+          </div>
+          <div class="plugin-actions">
+            <button class="connect-btn" disabled>Coming Soon</button>
+          </div>
+        </div>
+        
+        <div class="plugin-card placeholder">
+          <div class="plugin-icon">📧</div>
+          <div class="plugin-info">
+            <div class="plugin-name">Gmail</div>
+            <div class="plugin-description">Email context and reminders</div>
+          </div>
+          <div class="plugin-actions">
+            <button class="connect-btn" disabled>Coming Soon</button>
+          </div>
+        </div>
+        
+        <div class="plugin-card placeholder">
+          <div class="plugin-icon">📅</div>
+          <div class="plugin-info">
+            <div class="plugin-name">Calendar</div>
+            <div class="plugin-description">Events and scheduling</div>
+          </div>
+          <div class="plugin-actions">
+            <button class="connect-btn" disabled>Coming Soon</button>
+          </div>
+        </div>
+      </div>
+    </section>
+    
+    <section class="settings-section">
+      <h2>Data Storage</h2>
+      <p class="section-desc">Your data is stored locally</p>
+      
+      <div class="storage-info">
+        <div class="storage-item">
+          <span class="storage-label">Config directory</span>
+          <code class="storage-path">~/.canopy/</code>
+        </div>
+        <div class="storage-item">
+          <span class="storage-label">Uploads</span>
+          <code class="storage-path">~/.canopy/uploads/</code>
+        </div>
+        <div class="storage-item">
+          <span class="storage-label">Database</span>
+          <code class="storage-path">~/Library/Application Support/Canopy/canopy.db</code>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<style>
+  .settings-page {
+    height: 100%;
+    overflow-y: auto;
+    background: var(--bg-primary);
+  }
+  
+  .settings-header {
+    padding: var(--space-xl);
+    border-bottom: 1px solid var(--border);
+  }
+  
+  .settings-header h1 {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+  }
+  
+  .settings-content {
+    padding: var(--space-xl);
+    max-width: 700px;
+  }
+  
+  .settings-section {
+    margin-bottom: var(--space-2xl);
+  }
+  
+  .settings-section h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 var(--space-xs) 0;
+  }
+  
+  .section-desc {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin: 0 0 var(--space-lg) 0;
+  }
+  
+  .plugin-group {
+    margin-bottom: var(--space-xl);
+  }
+  
+  .plugin-group h3 {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin: 0 0 var(--space-sm) 0;
+  }
+  
+  .plugin-card {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-md);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--space-sm);
+    transition: all var(--transition-fast);
+  }
+  
+  .plugin-card.connected {
+    border-color: var(--domain-family);
+    background: var(--domain-family-bg);
+  }
+  
+  .plugin-card.placeholder {
+    opacity: 0.6;
+  }
+  
+  .plugin-icon {
+    font-size: 28px;
+    width: 40px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  
+  .plugin-info {
+    flex: 1;
+    min-width: 0;
+  }
+  
+  .plugin-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+  }
+  
+  .plugin-description {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  
+  .plugin-status {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: var(--space-xs);
+  }
+  
+  .plugin-status .error {
+    color: var(--domain-health);
+  }
+  
+  .plugin-actions {
+    display: flex;
+    gap: var(--space-sm);
+    flex-shrink: 0;
+  }
+  
+  .connect-btn,
+  .sync-btn,
+  .disconnect-btn {
+    padding: var(--space-sm) var(--space-md);
+    font-size: 13px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  
+  .connect-btn {
+    background: var(--accent);
+    color: white;
+    border: none;
+  }
+  
+  .connect-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+  
+  .connect-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  
+  .sync-btn {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+  }
+  
+  .sync-btn:hover:not(:disabled) {
+    background: var(--bg-secondary);
+  }
+  
+  .disconnect-btn {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  
+  .disconnect-btn:hover {
+    color: var(--domain-health);
+    border-color: var(--domain-health);
+  }
+  
+  .storage-info {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md);
+  }
+  
+  .storage-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) 0;
+  }
+  
+  .storage-item:not(:last-child) {
+    border-bottom: 1px solid var(--border);
+  }
+  
+  .storage-label {
+    font-size: 14px;
+    color: var(--text-secondary);
+  }
+  
+  .storage-path {
+    font-family: 'SF Mono', Consolas, monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+  }
+</style>
