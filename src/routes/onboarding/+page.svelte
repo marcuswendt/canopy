@@ -25,8 +25,10 @@
   import { uploads, completedUploads, type FileUpload } from '$lib/uploads';
   import { getAvailableIntegrations } from '$lib/integrations/init';
   import { connectPlugin, pluginStates } from '$lib/integrations/registry';
+  import StructuredInput, { type FieldConfig } from '$lib/components/StructuredInput.svelte';
 
   let messages = $state<{ role: 'ray' | 'user'; content: string }[]>([]);
+  let messagesEl = $state<HTMLDivElement | null>(null);
   let inputValue = $state('');
   let isProcessing = $state(false);
   let currentPhase = $state<'api-setup' | OnboardingPhase>('api-setup');
@@ -39,12 +41,17 @@
   let checkingApiKey = $state(true);
   let isElectron = $state(false);
 
-  // Profile state
-  let profileName = $state('');
-  let profileNickname = $state('');
-  let profileDob = $state('');
-  let profileLocation = $state('');
+  // Profile state (for StructuredInput)
+  let profileValues = $state<Record<string, string>>({});
   let guessedLocation = $state('');
+
+  // Profile field configuration
+  const profileFields: FieldConfig[] = [
+    { id: 'name', label: 'Your name', required: true, placeholder: 'Marcus' },
+    { id: 'nickname', label: 'Nickname', optional: true, placeholder: 'What friends call you' },
+    { id: 'dob', label: 'Date of birth', type: 'date', optional: true },
+    { id: 'location', label: 'Where are you based?', placeholder: 'City, Country' }
+  ];
 
   // Extracted data during onboarding
   let extractedDomains = $state<string[]>([]);
@@ -68,7 +75,7 @@
     isElectron = typeof window !== 'undefined' && window.canopy?.setSecret !== undefined;
 
     if (!isElectron) {
-      profileLocation = guessedLocation;
+      profileValues = { ...profileValues, location: guessedLocation };
       checkingApiKey = false;
       return;
     }
@@ -76,17 +83,12 @@
     // Load any previously saved profile data
     await userSettings.load();
     const savedSettings = userSettings.get();
-    if (savedSettings.userName) {
-      profileName = savedSettings.userName;
-    }
-    if (savedSettings.nickname) {
-      profileNickname = savedSettings.nickname;
-    }
-    if (savedSettings.dateOfBirth) {
-      profileDob = savedSettings.dateOfBirth;
-    }
-    // Use saved location or guessed location
-    profileLocation = savedSettings.location || guessedLocation;
+    profileValues = {
+      name: savedSettings.userName || '',
+      nickname: savedSettings.nickname || '',
+      dob: savedSettings.dateOfBirth || '',
+      location: savedSettings.location || guessedLocation
+    };
 
     // Check if API key is already configured
     const hasKey = await hasApiKey();
@@ -143,6 +145,19 @@
     messages = [...messages, { role: 'user', content }];
   }
 
+  // Auto-scroll messages to bottom when new messages arrive
+  $effect(() => {
+    if (messagesEl && messages.length > 0) {
+      // Use requestAnimationFrame to ensure DOM has updated
+      requestAnimationFrame(() => {
+        messagesEl?.scrollTo({
+          top: messagesEl.scrollHeight,
+          behavior: 'smooth'
+        });
+      });
+    }
+  });
+
   function handleVoiceResult(transcript: string) {
     // Use voice transcript as input
     inputValue = transcript;
@@ -163,7 +178,16 @@
     // Files are being processed in the background
     // They'll appear in UploadedFiles component
     if (files.length > 0) {
-      addRayMessage(`Got ${files.length} file${files.length > 1 ? 's' : ''}. Processing...`);
+      const hasImages = files.some(f => f.mimeType.startsWith('image/'));
+      const hasDocs = files.some(f => !f.mimeType.startsWith('image/'));
+
+      if (hasImages && !hasDocs) {
+        addRayMessage(`Got ${files.length} image${files.length > 1 ? 's' : ''}. Tell me who's in the photo${files.length > 1 ? 's' : ''} and I'll remember them.`);
+      } else if (hasDocs && !hasImages) {
+        addRayMessage(`Got ${files.length} document${files.length > 1 ? 's' : ''}. Processing...`);
+      } else {
+        addRayMessage(`Got ${files.length} file${files.length > 1 ? 's' : ''}. For photos, tell me who's in them.`);
+      }
     }
   }
 
@@ -217,15 +241,18 @@
 
       case 'domains':
         // Extract domains from input using AI
-        extractedDomains = await aiExtractDomains(input);
+        const newDomains = await aiExtractDomains(input);
 
-        if (extractedDomains.length > 0) {
+        if (newDomains.length > 0) {
+          // Add to existing domains (accumulate across messages)
+          extractedDomains = [...extractedDomains, ...newDomains];
+
           // IMPORTANT: Save domains immediately - never lose client data
-          for (const domain of extractedDomains) {
-            const type = domain.toLowerCase().includes('work') || domain.toLowerCase().includes('field') ? 'work' :
-                         domain.toLowerCase().includes('family') ? 'family' :
-                         domain.toLowerCase().includes('train') || domain.toLowerCase().includes('sport') || domain.toLowerCase().includes('racing') ? 'sport' :
-                         domain.toLowerCase().includes('health') ? 'health' :
+          for (const domain of newDomains) {
+            const type = domain.toLowerCase().includes('work') || domain.toLowerCase().includes('field') || domain.toLowerCase().includes('studio') || domain.toLowerCase().includes('company') ? 'work' :
+                         domain.toLowerCase().includes('family') || domain.toLowerCase().includes('kids') || domain.toLowerCase().includes('wife') || domain.toLowerCase().includes('husband') || domain.toLowerCase().includes('partner') ? 'family' :
+                         domain.toLowerCase().includes('train') || domain.toLowerCase().includes('sport') || domain.toLowerCase().includes('racing') || domain.toLowerCase().includes('cycling') || domain.toLowerCase().includes('running') || domain.toLowerCase().includes('fitness') ? 'sport' :
+                         domain.toLowerCase().includes('health') || domain.toLowerCase().includes('wellness') ? 'health' :
                          'personal';
             rayState.addDomain({
               id: domain.toLowerCase().replace(/\s+/g, '-'),
@@ -235,10 +262,65 @@
             });
           }
 
-          addRayMessage(RAY_VOICE.onboarding.confirmDomains(extractedDomains));
-          currentPhase = 'domain-highlights';
+          // Check which key life areas we're still missing
+          const domainTypes = extractedDomains.map(d => {
+            const lower = d.toLowerCase();
+            if (lower.includes('work') || lower.includes('field') || lower.includes('studio') || lower.includes('company') || lower.includes('job') || lower.includes('career')) return 'work';
+            if (lower.includes('family') || lower.includes('kids') || lower.includes('wife') || lower.includes('husband') || lower.includes('partner') || lower.includes('children')) return 'family';
+            if (lower.includes('train') || lower.includes('sport') || lower.includes('racing') || lower.includes('cycling') || lower.includes('running') || lower.includes('fitness') || lower.includes('gym')) return 'sport';
+            if (lower.includes('health') || lower.includes('wellness') || lower.includes('mental')) return 'health';
+            return 'personal';
+          });
+
+          const hasWork = domainTypes.includes('work');
+          const hasFamily = domainTypes.includes('family');
+          const hasSportOrHealth = domainTypes.includes('sport') || domainTypes.includes('health');
+          const hasPersonal = domainTypes.includes('personal');
+
+          // Check if user just mentioned sport/health in this message
+          const justAddedSportHealth = newDomains.some(d => {
+            const lower = d.toLowerCase();
+            return lower.includes('train') || lower.includes('sport') || lower.includes('racing') ||
+                   lower.includes('cycling') || lower.includes('running') || lower.includes('fitness') ||
+                   lower.includes('gym') || lower.includes('health') || lower.includes('wellness');
+          });
+
+          // Acknowledge what we got with a warm response
+          addRayMessage(`Got it: ${newDomains.join(', ')}.`);
+          await new Promise(r => setTimeout(r, 600));
+
+          // Prompt for missing key areas with warmer, conversational tone
+          if (!hasFamily) {
+            addRayMessage("What about family and friends? Who's closest to you—partner, kids, parents?");
+          } else if (!hasSportOrHealth) {
+            addRayMessage("How about your health or fitness? Any goals you're working toward, or ways you stay active?");
+          } else if (justAddedSportHealth && availableIntegrations.some(i => i.id === 'whoop')) {
+            // User just mentioned fitness/health - offer WHOOP integration
+            addRayMessage("Good moment to mention—I can connect with WHOOP to understand your recovery and readiness. Want to set that up now?");
+            showIntegrationPicker = true;
+            // Pre-select WHOOP
+            selectedIntegrations = ['whoop'];
+          } else if (!hasPersonal && extractedDomains.length < 4) {
+            addRayMessage("What do you do in your free time? What are your passions and favourite activities?");
+          } else {
+            // We have a good picture - finish up
+            addRayMessage(`Great—here's your life as I understand it:\n\n${extractedDomains.map(d => `  ◆ ${d}`).join('\n')}\n\nLet's get started! What's on your mind right now?`);
+            // Complete onboarding
+            rayState.completeOnboarding();
+            await loadEntities();
+            currentPhase = 'complete';
+          }
         } else {
-          addRayMessage("I didn't quite catch that. What are the main areas of your life? For example: work, family, fitness...");
+          // Check if user is saying "that's it" or similar
+          const doneIndicators = ['that\'s it', 'thats it', 'that\'s all', 'nothing else', 'no', 'nope', 'done', 'move on', 'next', 'skip'];
+          if (doneIndicators.some(d => input.toLowerCase().includes(d)) && extractedDomains.length > 0) {
+            addRayMessage(`Great—here's your life as I understand it:\n\n${extractedDomains.map(d => `  ◆ ${d}`).join('\n')}\n\nLet's get started! What's on your mind right now?`);
+            rayState.completeOnboarding();
+            await loadEntities();
+            currentPhase = 'complete';
+          } else {
+            addRayMessage("I didn't quite catch that. What are the main areas of your life? For example: work, family, fitness...");
+          }
         }
         break;
 
@@ -442,6 +524,11 @@
         // User confirmed, complete onboarding
         await saveAndComplete();
         break;
+
+      case 'complete':
+        // Onboarding is done - redirect to chat with their first question
+        goto(`/chat?q=${encodeURIComponent(input)}`);
+        break;
     }
   }
 
@@ -551,26 +638,27 @@
     addRayMessage(RAY_VOICE.onboarding.askProfile(guessedLocation));
   }
 
-  async function saveProfile() {
-    if (!profileName.trim()) return;
+  async function saveProfile(values?: Record<string, string>) {
+    const v = values || profileValues;
+    if (!v.name?.trim()) return;
 
     isProcessing = true;
 
     // Save to settings store
-    await userSettings.setUserName(profileName.trim());
-    if (profileNickname.trim()) {
-      await userSettings.setNickname(profileNickname.trim());
+    await userSettings.setUserName(v.name.trim());
+    if (v.nickname?.trim()) {
+      await userSettings.setNickname(v.nickname.trim());
     }
-    if (profileDob) {
-      await userSettings.setDateOfBirth(profileDob);
+    if (v.dob) {
+      await userSettings.setDateOfBirth(v.dob);
     }
-    if (profileLocation.trim()) {
-      await userSettings.setLocation(profileLocation.trim());
+    if (v.location?.trim()) {
+      await userSettings.setLocation(v.location.trim());
     }
 
-    const displayName = profileNickname.trim() || profileName.trim();
-    const greeting = getPersonalGreeting(displayName, profileLocation.trim());
-    const locationNote = profileLocation.trim() ? `I'll keep ${profileLocation.trim()} in mind for context.` : '';
+    const displayName = v.nickname?.trim() || v.name.trim();
+    const greeting = getPersonalGreeting(displayName, v.location?.trim() || '');
+    const locationNote = v.location?.trim() ? `I'll keep ${v.location.trim()} in mind for context.` : '';
 
     addRayMessage(`${greeting}\n\nI'm Ray—your guide through what matters. ${locationNote}\n\nNow let's map out your life so I can actually be useful.`);
 
@@ -593,10 +681,12 @@
     messages = [];
     extractedDomains = [];
     extractedEntities = [];
-    profileName = '';
-    profileNickname = '';
-    profileDob = '';
-    profileLocation = guessedLocation;
+    profileValues = {
+      name: '',
+      nickname: '',
+      dob: '',
+      location: guessedLocation
+    };
     showFileUpload = false;
     showPlatformInput = false;
     showIntegrationPicker = false;
@@ -644,22 +734,42 @@
 
     await new Promise(r => setTimeout(r, 600));
 
-    // Move to persona
-    currentPhase = 'persona';
-    showPlatformInput = true;
-    addRayMessage(RAY_VOICE.onboarding.askPersona);
+    // Continue with domain collection or finish
+    await continueAfterIntegrations();
   }
 
   function skipIntegrations() {
     showIntegrationPicker = false;
-
-    // Move to persona
-    currentPhase = 'persona';
-    showPlatformInput = true;
     addRayMessage("No problem, you can always connect these later in Settings.");
-    setTimeout(() => {
-      addRayMessage(RAY_VOICE.onboarding.askPersona);
-    }, 600);
+
+    // Continue with domain collection or finish
+    setTimeout(() => continueAfterIntegrations(), 600);
+  }
+
+  async function continueAfterIntegrations() {
+    // Check if we still need to ask about passions/hobbies
+    const domainTypes = extractedDomains.map(d => {
+      const lower = d.toLowerCase();
+      if (lower.includes('work') || lower.includes('field') || lower.includes('studio') || lower.includes('company')) return 'work';
+      if (lower.includes('family') || lower.includes('kids') || lower.includes('wife') || lower.includes('husband') || lower.includes('partner')) return 'family';
+      if (lower.includes('train') || lower.includes('sport') || lower.includes('racing') || lower.includes('cycling') || lower.includes('running') || lower.includes('fitness')) return 'sport';
+      if (lower.includes('health') || lower.includes('wellness')) return 'health';
+      return 'personal';
+    });
+
+    const hasPersonal = domainTypes.includes('personal');
+
+    if (!hasPersonal && extractedDomains.length < 4) {
+      // Ask about passions/hobbies
+      currentPhase = 'domains';
+      addRayMessage("What do you do in your free time? What are your passions and favourite activities?");
+    } else {
+      // We have a good picture - finish up
+      addRayMessage(`Great—here's your life as I understand it:\n\n${extractedDomains.map(d => `  ◆ ${d}`).join('\n')}\n\nLet's get started! What's on your mind right now?`);
+      rayState.completeOnboarding();
+      await loadEntities();
+      currentPhase = 'complete';
+    }
   }
 
 </script>
@@ -740,7 +850,7 @@
       {/if}
     {:else}
       <!-- Messages -->
-      <div class="messages">
+      <div class="messages" bind:this={messagesEl}>
         {#each messages as message}
           <div class="message {message.role}">
             {#if message.role === 'ray'}
@@ -777,63 +887,17 @@
           </button>
         </div>
       {:else if currentPhase === 'profile'}
-        <div class="profile-form">
-          <div class="profile-field">
-            <label for="profile-name">Your name <span class="required">*</span></label>
-            <input
-              id="profile-name"
-              type="text"
-              placeholder="Marcus"
-              bind:value={profileName}
-              disabled={isProcessing}
-            />
-          </div>
-
-          <div class="profile-field">
-            <label for="profile-nickname">Nickname <span class="optional">(optional)</span></label>
-            <input
-              id="profile-nickname"
-              type="text"
-              placeholder="What friends call you"
-              bind:value={profileNickname}
-              disabled={isProcessing}
-            />
-          </div>
-
-          <div class="profile-field">
-            <label for="profile-dob">Date of birth <span class="optional">(optional)</span></label>
-            <input
-              id="profile-dob"
-              type="date"
-              bind:value={profileDob}
-              disabled={isProcessing}
-            />
-          </div>
-
-          <div class="profile-field">
-            <label for="profile-location">Where are you based?</label>
-            <input
-              id="profile-location"
-              type="text"
-              placeholder="City, Country"
-              bind:value={profileLocation}
-              disabled={isProcessing}
-            />
-            {#if guessedLocation && profileLocation === guessedLocation}
-              <span class="location-hint">Based on your timezone</span>
-            {/if}
-          </div>
-
-          <div class="profile-actions">
-            <button
-              class="primary-btn"
-              onclick={saveProfile}
-              disabled={!profileName.trim() || isProcessing}
-            >
-              {isProcessing ? 'Saving...' : 'Continue'}
-            </button>
-          </div>
-        </div>
+        <StructuredInput
+          fields={profileFields.map(f =>
+            f.id === 'location' && guessedLocation && profileValues.location === guessedLocation
+              ? { ...f, hint: 'Based on your timezone' }
+              : f
+          )}
+          bind:values={profileValues}
+          submitLabel="Continue"
+          disabled={isProcessing}
+          onsubmit={saveProfile}
+        />
       {:else if showIntegrationPicker}
         <div class="integration-picker">
           <div class="integration-cards">
@@ -1444,26 +1508,7 @@
     50% { opacity: 1; }
   }
 
-  /* Profile Form Styles */
-  .profile-form {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-md);
-  }
-
-  .profile-field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-xs);
-    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-    opacity: 0;
-  }
-
-  .profile-field:nth-child(1) { animation-delay: 0.05s; }
-  .profile-field:nth-child(2) { animation-delay: 0.1s; }
-  .profile-field:nth-child(3) { animation-delay: 0.15s; }
-  .profile-field:nth-child(4) { animation-delay: 0.2s; }
-
+  /* fieldIn keyframe is used by various elements */
   @keyframes fieldIn {
     0% {
       opacity: 0;
@@ -1473,55 +1518,6 @@
       opacity: 1;
       transform: translateY(0) scale(1);
     }
-  }
-
-  .profile-field label {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text-primary);
-  }
-
-  .profile-field .required {
-    color: #dc2626;
-  }
-
-  .profile-field .optional {
-    font-weight: 400;
-    color: var(--text-muted);
-    font-size: 12px;
-  }
-
-  .profile-field input {
-    padding: var(--space-md);
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    color: var(--text-primary);
-    font-size: 15px;
-  }
-
-  .profile-field input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-
-  .profile-field input[type="date"] {
-    font-family: inherit;
-  }
-
-  .location-hint {
-    font-size: 12px;
-    color: var(--text-muted);
-    font-style: italic;
-  }
-
-  .profile-actions {
-    display: flex;
-    justify-content: center;
-    margin-top: var(--space-sm);
-    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-    animation-delay: 0.25s;
-    opacity: 0;
   }
 
   /* Multi-modal input styles */

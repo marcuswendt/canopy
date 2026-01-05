@@ -37,11 +37,12 @@ export type OnboardingPhase =
   | 'welcome'
   | 'profile'             // Name, location, optional details
   | 'domains'
-  | 'domain-discovery'    // Deep dive into each domain
-  | 'work-details'        // Work-specific questions
-  | 'family-details'      // Family members
-  | 'family-events'       // Upcoming family events
-  | 'health-details'      // Health/fitness goals
+  | 'domain-highlights'   // Quick top-level context (optional)
+  | 'domain-discovery'    // Deep dive into each domain (future)
+  | 'work-details'        // Work-specific questions (future deep-dive)
+  | 'family-details'      // Family members (future deep-dive)
+  | 'family-events'       // Upcoming family events (future deep-dive)
+  | 'health-details'      // Health/fitness goals (future deep-dive)
   | 'persona'             // Digital presence
   | 'integrations'
   | 'review'
@@ -114,8 +115,8 @@ Names, ages, anything that helps me understand when you mention them.`,
 
 Training goals, wellness focus, things you're tracking...`,
 
-    confirmDomains: (domains: string[]) => 
-      `Got it. ${domains.length} domains:\n\n${domains.map(d => `  ◆ ${d}`).join('\n')}\n\nLet's go deep on each one—starting with ${domains[0]}.`,
+    confirmDomains: (domains: string[]) =>
+      `Got it. ${domains.length} domains:\n\n${domains.map(d => `  ◆ ${d}`).join('\n')}\n\nAnything else top-of-mind I should know? Key people, upcoming events, things keeping you up at night?\n\nJust a sentence or two—we can go deeper anytime.`,
     
     // Domain transitions
     startDomain: (domain: string, icon: string) =>
@@ -291,6 +292,27 @@ export function getGreeting(): string {
   if (hour < 12) return RAY_VOICE.greeting.morning;
   if (hour < 17) return RAY_VOICE.greeting.afternoon;
   return RAY_VOICE.greeting.evening;
+}
+
+// Helper: Get personalized greeting with name
+export function getPersonalGreeting(name: string, location?: string): string {
+  const hour = new Date().getHours();
+
+  // Use Kia Ora for New Zealand users
+  const isNZ = location?.toLowerCase().includes('new zealand') ||
+               location?.toLowerCase().includes('auckland') ||
+               location?.toLowerCase().includes('wellington') ||
+               location?.toLowerCase().includes('christchurch');
+
+  if (isNZ) {
+    if (hour < 12) return `Kia ora, ${name}!`;
+    if (hour < 17) return `Kia ora, ${name}!`;
+    return `Kia ora, ${name}!`;
+  }
+
+  if (hour < 12) return `Good morning, ${name}!`;
+  if (hour < 17) return `Good afternoon, ${name}!`;
+  return `Good evening, ${name}!`;
 }
 
 // Helper: Generate life summary for review
