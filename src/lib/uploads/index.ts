@@ -2,6 +2,7 @@
 // Handles file ingestion, processing, and entity extraction
 
 import { v4 as uuid } from 'uuid';
+import { extractFromDocument, extractFromUrl as aiExtractFromUrl } from '$lib/ai/extraction';
 
 // =============================================================================
 // TYPES
@@ -224,23 +225,48 @@ export const allSuggestions = derived(
 );
 
 // =============================================================================
-// FILE PROCESSING (would use Claude API in production)
+// FILE PROCESSING
 // =============================================================================
 
 export async function processFile(upload: FileUpload): Promise<ExtractedContent> {
   uploads.updateStatus(upload.id, 'processing');
-  
+
   try {
-    // In production, this would:
-    // 1. Read file content
-    // 2. Send to Claude for extraction
-    // 3. Return structured content
-    
-    // For now, return mock extraction based on filename
-    const extracted = await mockExtraction(upload);
+    // For images, return basic info (vision would be a future enhancement)
+    if (isImage(upload.mimeType)) {
+      const extracted: ExtractedContent = {
+        description: 'Image uploaded',
+      };
+      uploads.setExtracted(upload.id, extracted);
+      return extracted;
+    }
+
+    // For text-based files, read content and extract with AI
+    // Note: In Electron, we'd read the file from localPath
+    // For now, we'll use the filename as a hint for processing
+    const isTextFile = upload.mimeType.startsWith('text/') ||
+      upload.mimeType === 'application/json' ||
+      upload.mimeType === 'application/pdf';
+
+    if (isTextFile && typeof window !== 'undefined' && window.canopy) {
+      // In Electron, we could read the file content here
+      // For now, create a placeholder that would be enhanced with file reading
+      const extracted: ExtractedContent = {
+        summary: `Processing ${upload.filename}...`,
+        entities: [],
+      };
+      uploads.setExtracted(upload.id, extracted);
+      return extracted;
+    }
+
+    // Use AI extraction with filename as content hint
+    const extracted = await extractFromDocument(
+      `File: ${upload.filename}`,
+      { filename: upload.filename, mimeType: upload.mimeType }
+    );
     uploads.setExtracted(upload.id, extracted);
     return extracted;
-    
+
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Processing failed';
     uploads.updateStatus(upload.id, 'failed', message);
@@ -248,95 +274,43 @@ export async function processFile(upload: FileUpload): Promise<ExtractedContent>
   }
 }
 
-async function mockExtraction(upload: FileUpload): Promise<ExtractedContent> {
-  // Simulate processing delay
-  await new Promise(r => setTimeout(r, 500));
-  
-  const filename = upload.filename.toLowerCase();
-  
-  // Mock extractions based on filename patterns
-  if (filename.includes('field')) {
-    return {
-      summary: 'FIELD.IO company information',
-      entities: [
-        { name: 'FIELD.IO', type: 'company', domain: 'work', confidence: 0.95, source: upload.filename },
-        { name: 'Marcus Wendt', type: 'person', domain: 'work', confidence: 0.9, source: upload.filename, details: { role: 'Founder & CEO' } },
-      ],
-    };
-  }
-  
-  if (filename.includes('samsung')) {
-    return {
-      summary: 'Samsung project documentation',
-      entities: [
-        { name: 'Samsung', type: 'project', domain: 'work', confidence: 0.95, source: upload.filename },
-        { name: 'One UI Visual Language', type: 'project', domain: 'work', confidence: 0.8, source: upload.filename },
-      ],
-    };
-  }
-  
-  if (filename.includes('chanel')) {
-    return {
-      summary: 'Chanel project documentation',
-      entities: [
-        { name: 'Chanel', type: 'project', domain: 'work', confidence: 0.95, source: upload.filename },
-        { name: '113 Spring', type: 'project', domain: 'work', confidence: 0.85, source: upload.filename },
-      ],
-    };
-  }
-  
-  if (isImage(upload.mimeType)) {
-    return {
-      description: 'Image uploaded',
-      // Would include face detection results
-    };
-  }
-  
-  return {
-    summary: 'Document processed',
-    entities: [],
-  };
-}
-
 // =============================================================================
 // URL FETCHING
 // =============================================================================
 
 export async function fetchUrl(url: string): Promise<ExtractedContent> {
-  // In production, this would:
-  // 1. Fetch URL content
-  // 2. Parse HTML/extract text
-  // 3. Send to Claude for entity extraction
-  
-  // For now, mock based on URL patterns
-  await new Promise(r => setTimeout(r, 800));
-  
-  if (url.includes('linkedin.com')) {
+  try {
+    // Fetch URL content
+    const response = await fetch(url);
+    if (!response.ok) {
+      return {
+        title: url,
+        summary: `Failed to fetch URL: ${response.status}`,
+        entities: [],
+      };
+    }
+
+    const html = await response.text();
+
+    // Extract text content from HTML (basic extraction)
+    const textContent = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 10000); // Limit content length
+
+    // Use AI to extract entities from the content
+    const extracted = await aiExtractFromUrl(textContent, url);
+    return extracted;
+
+  } catch (error) {
+    // If fetch fails (CORS, network, etc.), return basic info
     return {
-      title: 'LinkedIn Profile',
-      summary: 'Professional profile information',
-      entities: [
-        { name: 'Marcus Wendt', type: 'person', confidence: 0.95, source: url },
-      ],
+      title: url,
+      summary: 'Unable to fetch URL content',
+      entities: [],
     };
   }
-  
-  if (url.includes('field.io')) {
-    return {
-      title: 'FIELD.IO',
-      summary: 'Creative Intelligence Practice',
-      entities: [
-        { name: 'FIELD.IO', type: 'company', domain: 'work', confidence: 0.95, source: url },
-        { name: 'Nike', type: 'project', domain: 'work', confidence: 0.8, source: url },
-        { name: 'Chanel', type: 'project', domain: 'work', confidence: 0.8, source: url },
-        { name: 'IBM', type: 'project', domain: 'work', confidence: 0.8, source: url },
-      ],
-    };
-  }
-  
-  return {
-    title: 'Web page',
-    summary: 'Content fetched from URL',
-    entities: [],
-  };
 }

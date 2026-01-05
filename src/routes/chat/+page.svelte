@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { entities } from '$lib/stores/entities';
@@ -7,30 +7,59 @@
     createThread,
     addMessage,
     getThreadMessages,
+    getRecentThreads,
+    updateThread,
     extractEntitiesFromText,
     detectDomains,
-    updateEntityMention
+    updateEntityMention,
+    recordCoOccurrence
   } from '$lib/db/client';
-  import type { Entity, Message } from '$lib/db/types';
+  import { generateChatResponse } from '$lib/ai/extraction';
+  import { hasApiKey, getFallbackMessage } from '$lib/ai';
+  import { buildChatContext, estimateMessageTokens } from '$lib/ai/context';
+  import type { Entity, Message, Thread } from '$lib/db/types';
   import DomainBadge from '$lib/components/DomainBadge.svelte';
+  import MentionInput from '$lib/components/MentionInput.svelte';
+  import ArtifactPanel from '$lib/components/ArtifactPanel.svelte';
+  import Markdown from '$lib/components/Markdown.svelte';
+  import { loadArtifacts } from '$lib/stores/artifacts';
 
   let inputValue = $state('');
   let messages = $state<Message[]>([]);
   let isLoading = $state(false);
+  let streamingContent = $state('');
   let threadId = $state<string | null>(null);
   let contextEntities = $state<Entity[]>([]);
   let threadDomains = $state<Set<string>>(new Set());
-  
+  let activeStream: { cancel: () => void } | null = null;
+  let explicitMentions = $state<Entity[]>([]);
+  let mentionInputRef: MentionInput;
+  let showArtifacts = $state(true);
+
+  // Context management state
+  let threadSummary = $state<string | undefined>(undefined);
+  let summaryUpToIndex = $state(0);
+
   onMount(async () => {
+    // Load artifacts for sidebar
+    loadArtifacts();
     const query = $page.url.searchParams.get('q');
     const entityId = $page.url.searchParams.get('entity');
     const existingThreadId = $page.url.searchParams.get('thread');
-    
+
     if (existingThreadId) {
       threadId = existingThreadId;
       messages = await getThreadMessages(existingThreadId);
+
+      // Load existing summary from thread
+      const threads = await getRecentThreads(100);
+      const currentThread = threads.find(t => t.id === existingThreadId);
+      if (currentThread) {
+        threadSummary = currentThread.summary;
+        summaryUpToIndex = currentThread.summary_up_to || 0;
+      }
     }
-    
+
     if (entityId) {
       const entity = $entities.find(e => e.id === entityId);
       if (entity) {
@@ -38,7 +67,7 @@
         threadDomains.add(entity.domain);
       }
     }
-    
+
     if (query) {
       inputValue = query;
       setTimeout(() => sendMessage(), 100);
@@ -47,17 +76,25 @@
   
   async function sendMessage() {
     if (!inputValue.trim() || isLoading) return;
-    
+
     const content = inputValue;
+    const currentExplicitMentions = [...explicitMentions];
     inputValue = '';
+    explicitMentions = [];
+    mentionInputRef?.clear();
     isLoading = true;
-    
+
     if (!threadId) {
       const thread = await createThread(content.slice(0, 50));
       if (thread) threadId = thread.id;
     }
-    
-    const mentionedEntities = extractEntitiesFromText(content, $entities);
+
+    // Combine explicit @mentions with implicit text detection
+    const implicitEntities = extractEntitiesFromText(content, $entities);
+    const mentionedEntities = [
+      ...currentExplicitMentions,
+      ...implicitEntities.filter(e => !currentExplicitMentions.find(m => m.id === e.id))
+    ];
     const detectedDomains = detectDomains(content);
     
     for (const entity of mentionedEntities) {
@@ -67,7 +104,12 @@
       threadDomains.add(entity.domain);
       await updateEntityMention(entity.id);
     }
-    
+
+    // Record co-occurrence relationships between mentioned entities
+    if (mentionedEntities.length >= 2) {
+      await recordCoOccurrence(mentionedEntities.map(e => e.id));
+    }
+
     for (const domain of detectedDomains) {
       threadDomains.add(domain);
     }
@@ -75,44 +117,69 @@
     
     const userMessage = await addMessage(threadId!, 'user', content, mentionedEntities.map(e => e.id));
     if (userMessage) messages = [...messages, userMessage];
-    
-    // Mock AI response - replace with Claude API
-    setTimeout(async () => {
-      const response = generateResponse(content, contextEntities);
-      const assistantMessage = await addMessage(threadId!, 'assistant', response, []);
-      if (assistantMessage) messages = [...messages, assistantMessage];
-      isLoading = false;
-    }, 800);
-  }
-  
-  function generateResponse(query: string, context: Entity[]): string {
-    const lowerQuery = query.toLowerCase();
-    
-    if (lowerQuery.includes('training') || lowerQuery.includes('hmr') || lowerQuery.includes('balance')) {
-      return `That tension makes sense. These aren't really separate compartments—they're drawing from the same well of energy and attention.\n\nLooking at what's live right now:\n\n• **Abel Tasman Jan 12-17** — one week away\n• **Samsung pitch** — active, high stakes\n• **HMR base phase** — 281 TSS behind target\n\nThe trip is non-negotiable family time. Samsung has a deadline. Training can flex.\n\nWhat if this week you focused on Saturday's long ride only, skipped Sunday, and gave yourself permission to be present for trip prep?`;
+
+    // Build optimized context using smart compaction
+    const fullHistory = messages
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+
+    const contextResult = await buildChatContext(content, {
+      threadHistory: fullHistory,
+      allEntities: $entities,
+      existingSummary: threadSummary,
+      summaryUpToIndex,
+    });
+
+    // Persist summary if compaction occurred
+    if (contextResult.wasCompacted && contextResult.summary && threadId) {
+      threadSummary = contextResult.summary;
+      summaryUpToIndex = messages.length;
+      await updateThread(threadId, {
+        summary: contextResult.summary,
+        summaryUpTo: messages.length,
+      });
     }
-    
-    if (lowerQuery.includes('samsung') || lowerQuery.includes('pitch')) {
-      return `Here's what I know about Samsung:\n\n• **Project**: One UI Visual Language rebrand\n• **Value**: £600-750K potential\n• **Status**: Active, high stakes\n\nYou last mentioned this 2 days ago. What's on your mind about it?`;
-    }
-    
-    if (context.length > 0) {
-      let response = `Based on what's active:\n\n`;
-      for (const entity of context.slice(0, 3)) {
-        response += `• **${entity.name}** — ${entity.description || entity.domain}\n`;
+
+    // Start streaming response
+    streamingContent = '';
+    activeStream = generateChatResponse(
+      content,
+      {
+        entities: contextResult.entities,
+        threadHistory: contextResult.messages,
+      },
+      {
+        onDelta: (delta) => {
+          streamingContent += delta;
+        },
+        onEnd: async () => {
+          const finalContent = streamingContent;
+          streamingContent = '';
+          activeStream = null;
+
+          const assistantMessage = await addMessage(threadId!, 'assistant', finalContent, []);
+          if (assistantMessage) messages = [...messages, assistantMessage];
+          isLoading = false;
+        },
+        onError: async (error) => {
+          console.error('Chat error:', error);
+          streamingContent = '';
+          activeStream = null;
+
+          const errorMessage = getFallbackMessage({ error, code: 'STREAM_ERROR' });
+          const assistantMessage = await addMessage(threadId!, 'assistant', errorMessage, []);
+          if (assistantMessage) messages = [...messages, assistantMessage];
+          isLoading = false;
+        }
       }
-      return response + `\nWhat would you like to explore?`;
-    }
-    
-    return `I'm tracking several things that might be relevant:\n\n• **Samsung pitch** — work, active\n• **Abel Tasman** — family trip coming up\n• **HMR training** — base phase\n\nWhich area would you like to dig into?`;
+    );
   }
-  
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
+
+  onDestroy(() => {
+    if (activeStream) {
+      activeStream.cancel();
     }
-  }
+  });
 </script>
 
 <div class="chat-container">
@@ -135,13 +202,20 @@
               <div class="message-bubble">{message.content}</div>
             {:else}
               <div class="message-content">
-                {@html message.content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>')}
+                <Markdown content={message.content} />
               </div>
             {/if}
           </div>
         {/each}
-        
-        {#if isLoading}
+
+        {#if streamingContent}
+          <div class="message assistant">
+            <div class="message-content streaming">
+              <Markdown content={streamingContent} />
+              <span class="cursor">▌</span>
+            </div>
+          </div>
+        {:else if isLoading}
           <div class="message assistant">
             <div class="typing-indicator"><span></span><span></span><span></span></div>
           </div>
@@ -160,12 +234,14 @@
       
       <div class="input-area">
         <div class="input-container">
-          <textarea
-            placeholder="What's on your mind..."
+          <MentionInput
+            bind:this={mentionInputRef}
             bind:value={inputValue}
-            onkeydown={handleKeydown}
-            rows="1"
-          ></textarea>
+            placeholder="What's on your mind... (use @ to mention entities)"
+            disabled={isLoading}
+            onsubmit={sendMessage}
+            onchange={(_, mentions) => { explicitMentions = mentions; }}
+          />
           <div class="input-actions">
             <button class="input-action" title="Attach">📎</button>
             <button class="input-action" title="Voice">🎤</button>
@@ -178,36 +254,61 @@
     </div>
     
     <aside class="context-sidebar">
-      <section class="context-section">
-        <h3 class="context-title">Context</h3>
-        {#each contextEntities as entity}
-          <div class="context-item">
-            <span class="context-name">{entity.name}</span>
-            {#if entity.description}
-              <span class="context-desc">{entity.description}</span>
+      <div class="sidebar-tabs">
+        <button
+          class="sidebar-tab"
+          class:active={!showArtifacts}
+          onclick={() => showArtifacts = false}
+        >
+          Context
+        </button>
+        <button
+          class="sidebar-tab"
+          class:active={showArtifacts}
+          onclick={() => showArtifacts = true}
+        >
+          Artifacts
+        </button>
+      </div>
+
+      {#if showArtifacts}
+        <div class="artifact-container">
+          <ArtifactPanel {contextEntities} />
+        </div>
+      {:else}
+        <div class="context-content">
+          <section class="context-section">
+            <h3 class="context-title">Entities</h3>
+            {#each contextEntities as entity}
+              <div class="context-item">
+                <span class="context-name">{entity.name}</span>
+                {#if entity.description}
+                  <span class="context-desc">{entity.description}</span>
+                {/if}
+                <DomainBadge domain={entity.domain} small />
+              </div>
+            {/each}
+            {#if contextEntities.length === 0}
+              <p class="empty-context">Entities mentioned will appear here.</p>
             {/if}
-            <DomainBadge domain={entity.domain} small />
-          </div>
-        {/each}
-        {#if contextEntities.length === 0}
-          <p class="empty-context">Entities mentioned will appear here.</p>
-        {/if}
-      </section>
-      
-      <section class="context-section">
-        <h3 class="context-title">This Thread</h3>
-        <div class="thread-meta">
-          <span>Started today</span>
-          <span>{messages.length} messages</span>
+          </section>
+
+          <section class="context-section">
+            <h3 class="context-title">This Thread</h3>
+            <div class="thread-meta">
+              <span>Started today</span>
+              <span>{messages.length} messages</span>
+            </div>
+            <div class="thread-domains">
+              {#each [...threadDomains] as domain}
+                <DomainBadge {domain} small />
+              {/each}
+            </div>
+          </section>
+
+          <button class="view-memories-btn">View all memories →</button>
         </div>
-        <div class="thread-domains">
-          {#each [...threadDomains] as domain}
-            <DomainBadge {domain} small />
-          {/each}
-        </div>
-      </section>
-      
-      <button class="view-memories-btn">View all memories →</button>
+      {/if}
     </aside>
   </div>
 </div>
@@ -295,11 +396,18 @@
   
   .message-content {
     font-size: 15px;
-    line-height: 1.6;
     color: var(--text-primary);
   }
-  
-  .message-content :global(strong) { font-weight: 600; }
+
+  .message-content.streaming {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+  }
+
+  .message-content.streaming :global(.markdown) {
+    flex: 1;
+  }
   
   .typing-indicator {
     display: flex;
@@ -317,6 +425,17 @@
   
   .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
   .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+  .cursor {
+    display: inline-block;
+    animation: blink 1s infinite;
+    color: var(--accent);
+  }
+
+  @keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
   
   .memory-prompt {
     margin: var(--space-md) var(--space-lg);
@@ -368,21 +487,6 @@
     padding: var(--space-sm);
   }
   
-  .input-container textarea {
-    flex: 1;
-    border: none;
-    background: transparent;
-    font-size: 15px;
-    color: var(--text-primary);
-    resize: none;
-    padding: var(--space-sm);
-    line-height: 1.4;
-    font-family: inherit;
-  }
-  
-  .input-container textarea::placeholder { color: var(--text-muted); }
-  .input-container textarea:focus { outline: none; }
-  
   .input-actions {
     display: flex;
     align-items: center;
@@ -417,16 +521,56 @@
   .send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   
   .context-sidebar {
-    width: 260px;
+    width: 300px;
     border-left: 1px solid var(--border);
     background: var(--bg-secondary);
-    padding: var(--space-md);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-tab {
+    flex: 1;
+    padding: var(--space-sm) var(--space-md);
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .sidebar-tab:hover {
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+  }
+
+  .sidebar-tab.active {
+    color: var(--text-primary);
+    border-bottom: 2px solid var(--accent);
+    margin-bottom: -1px;
+  }
+
+  .artifact-container {
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .context-content {
+    flex: 1;
     overflow-y: auto;
+    padding: var(--space-md);
     display: flex;
     flex-direction: column;
     gap: var(--space-lg);
   }
-  
+
   .context-section {
     display: flex;
     flex-direction: column;

@@ -2,11 +2,52 @@
   import { onMount } from 'svelte';
   import { registry, allPlugins, pluginStates, syncPlugin, connectPlugin, disconnectPlugin, enablePlugin, disablePlugin } from '$lib/integrations/registry';
   import { whoopPlugin } from '$lib/integrations/whoop';
+  import { hasApiKey } from '$lib/ai';
+
+  // Claude API key state
+  let apiKeyInput = $state('');
+  let hasKey = $state(false);
+  let savingKey = $state(false);
+  let keyMessage = $state('');
 
   // Register plugins on mount
-  onMount(() => {
+  onMount(async () => {
     registry.register(whoopPlugin);
+    hasKey = await hasApiKey();
   });
+
+  async function saveApiKey() {
+    if (!apiKeyInput.trim()) return;
+    savingKey = true;
+    keyMessage = '';
+
+    try {
+      if (typeof window !== 'undefined' && window.canopy?.setSecret) {
+        await window.canopy.setSecret('claude_api_key', apiKeyInput.trim());
+        hasKey = true;
+        apiKeyInput = '';
+        keyMessage = 'API key saved successfully';
+      } else {
+        keyMessage = 'Settings only available in Electron app';
+      }
+    } catch (error) {
+      keyMessage = 'Failed to save API key';
+    } finally {
+      savingKey = false;
+    }
+  }
+
+  async function removeApiKey() {
+    try {
+      if (typeof window !== 'undefined' && window.canopy?.deleteSecret) {
+        await window.canopy.deleteSecret('claude_api_key');
+        hasKey = false;
+        keyMessage = 'API key removed';
+      }
+    } catch (error) {
+      keyMessage = 'Failed to remove API key';
+    }
+  }
 
   let syncing = $state<Set<string>>(new Set());
   let connecting = $state<Set<string>>(new Set());
@@ -206,6 +247,50 @@
     </section>
     
     <section class="settings-section">
+      <h2>AI</h2>
+      <p class="section-desc">Claude powers Ray's intelligence</p>
+
+      <div class="api-key-card">
+        <div class="api-key-header">
+          <span class="api-key-label">Claude API Key</span>
+          {#if hasKey}
+            <span class="api-key-status connected">Connected</span>
+          {:else}
+            <span class="api-key-status">Not configured</span>
+          {/if}
+        </div>
+
+        {#if hasKey}
+          <p class="api-key-info">Your API key is securely stored. Ray is ready to help.</p>
+          <button class="remove-key-btn" onclick={removeApiKey}>Remove API Key</button>
+        {:else}
+          <p class="api-key-info">
+            Get your API key from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>
+          </p>
+          <div class="api-key-input-row">
+            <input
+              type="password"
+              bind:value={apiKeyInput}
+              placeholder="sk-ant-..."
+              class="api-key-input"
+            />
+            <button
+              class="save-key-btn"
+              onclick={saveApiKey}
+              disabled={!apiKeyInput.trim() || savingKey}
+            >
+              {savingKey ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        {/if}
+
+        {#if keyMessage}
+          <p class="key-message" class:success={keyMessage.includes('success')}>{keyMessage}</p>
+        {/if}
+      </div>
+    </section>
+
+    <section class="settings-section">
       <h2>Data Storage</h2>
       <p class="section-desc">Your data is stored locally</p>
       
@@ -220,7 +305,7 @@
         </div>
         <div class="storage-item">
           <span class="storage-label">Database</span>
-          <code class="storage-path">~/Library/Application Support/Canopy/canopy.db</code>
+          <code class="storage-path">~/.canopy/canopy.db</code>
         </div>
       </div>
     </section>
@@ -417,5 +502,124 @@
     background: var(--bg-tertiary);
     padding: 2px 6px;
     border-radius: var(--radius-sm);
+  }
+
+  /* API Key Section */
+  .api-key-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+  }
+
+  .api-key-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-md);
+  }
+
+  .api-key-label {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .api-key-status {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+  }
+
+  .api-key-status.connected {
+    background: var(--domain-family-bg);
+    color: var(--domain-family);
+  }
+
+  .api-key-info {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-md);
+  }
+
+  .api-key-info a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .api-key-info a:hover {
+    text-decoration: underline;
+  }
+
+  .api-key-input-row {
+    display: flex;
+    gap: var(--space-sm);
+  }
+
+  .api-key-input {
+    flex: 1;
+    padding: var(--space-sm) var(--space-md);
+    font-size: 14px;
+    font-family: 'SF Mono', Consolas, monospace;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+  }
+
+  .api-key-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .api-key-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .save-key-btn {
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .save-key-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .save-key-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .remove-key-btn {
+    padding: var(--space-sm) var(--space-md);
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .remove-key-btn:hover {
+    color: var(--domain-health);
+    border-color: var(--domain-health);
+  }
+
+  .key-message {
+    margin-top: var(--space-sm);
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  .key-message.success {
+    color: var(--domain-family);
   }
 </style>
