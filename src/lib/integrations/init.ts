@@ -5,13 +5,13 @@ import { registry, syncPlugin } from './registry';
 import { timePlugin } from './time';
 import { weatherPlugin } from './weather';
 import { whoopPlugin } from './whoop';
-import { googleCalendarPlugin } from './google/calendar';
+import { googlePlugin } from './google';
 
 // Default plugins that are always enabled
 const DEFAULT_PLUGINS = ['time', 'weather'];
 
 // All available plugins
-const ALL_PLUGINS = [timePlugin, weatherPlugin, whoopPlugin, googleCalendarPlugin];
+const ALL_PLUGINS = [timePlugin, weatherPlugin, whoopPlugin, googlePlugin];
 
 /**
  * Initialize the plugin system

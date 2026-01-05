@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { registry, allPlugins, pluginStates, syncPlugin, connectPlugin, disconnectPlugin, enablePlugin, disablePlugin } from '$lib/integrations/registry';
   import { whoopPlugin } from '$lib/integrations/whoop';
+  import { googlePlugin } from '$lib/integrations/google';
   import { hasApiKey } from '$lib/ai';
   import { userSettings } from '$lib/stores/settings';
 
@@ -16,14 +17,23 @@
   let userLocation = $state('');
   let profileMessage = $state('');
 
+  // Google OAuth state
+  let googleClientId = $state('');
+  let googleMessage = $state('');
+  let savingGoogle = $state(false);
+
   // Register plugins on mount
   onMount(async () => {
     registry.register(whoopPlugin);
+    registry.register(googlePlugin);
     hasKey = await hasApiKey();
     await userSettings.load();
     const settings = userSettings.get();
     userName = settings.userName || '';
     userLocation = settings.location || '';
+
+    // Load Google OAuth client ID
+    googleClientId = localStorage.getItem('google_oauth_client_id') || '';
   });
 
   async function saveProfile() {
@@ -71,6 +81,33 @@
       }
     } catch (error) {
       keyMessage = 'Failed to remove API key';
+    }
+  }
+
+  function saveGoogleClientId() {
+    if (!googleClientId.trim()) return;
+    savingGoogle = true;
+    googleMessage = '';
+
+    try {
+      localStorage.setItem('google_oauth_client_id', googleClientId.trim());
+      googleMessage = 'Google Client ID saved';
+      setTimeout(() => googleMessage = '', 2000);
+    } catch (error) {
+      googleMessage = 'Failed to save Client ID';
+    } finally {
+      savingGoogle = false;
+    }
+  }
+
+  function removeGoogleClientId() {
+    try {
+      localStorage.removeItem('google_oauth_client_id');
+      googleClientId = '';
+      googleMessage = 'Google Client ID removed';
+      setTimeout(() => googleMessage = '', 2000);
+    } catch (error) {
+      googleMessage = 'Failed to remove Client ID';
     }
   }
 
@@ -352,7 +389,7 @@
     <section class="settings-section">
       <h2>Data Storage</h2>
       <p class="section-desc">Your data is stored locally</p>
-      
+
       <div class="storage-info">
         <div class="storage-item">
           <span class="storage-label">Config directory</span>
@@ -366,6 +403,53 @@
           <span class="storage-label">Database</span>
           <code class="storage-path">~/.canopy/canopy.db</code>
         </div>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Developer</h2>
+      <p class="section-desc">Configure OAuth credentials for integrations</p>
+
+      <div class="oauth-card">
+        <div class="oauth-header">
+          <span class="oauth-label">Google OAuth Client ID</span>
+          {#if googleClientId}
+            <span class="oauth-status configured">Configured</span>
+          {:else}
+            <span class="oauth-status">Not configured</span>
+          {/if}
+        </div>
+
+        <p class="oauth-info">
+          Required for Google Calendar integration. Create credentials at <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>
+        </p>
+
+        {#if googleClientId}
+          <div class="oauth-configured">
+            <code class="oauth-value">{googleClientId.substring(0, 20)}...{googleClientId.slice(-10)}</code>
+            <button class="remove-oauth-btn" onclick={removeGoogleClientId}>Remove</button>
+          </div>
+        {:else}
+          <div class="oauth-input-row">
+            <input
+              type="text"
+              bind:value={googleClientId}
+              placeholder="123456789-abc123def456.apps.googleusercontent.com"
+              class="oauth-input"
+            />
+            <button
+              class="save-oauth-btn"
+              onclick={saveGoogleClientId}
+              disabled={!googleClientId.trim() || savingGoogle}
+            >
+              {savingGoogle ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        {/if}
+
+        {#if googleMessage}
+          <p class="oauth-message" class:success={googleMessage.includes('saved')}>{googleMessage}</p>
+        {/if}
       </div>
     </section>
   </div>
@@ -747,6 +831,140 @@
   }
 
   .key-message.success {
+    color: var(--domain-family);
+  }
+
+  /* Developer / OAuth Section */
+  .oauth-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+  }
+
+  .oauth-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-md);
+  }
+
+  .oauth-label {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .oauth-status {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+  }
+
+  .oauth-status.configured {
+    background: var(--domain-family-bg);
+    color: var(--domain-family);
+  }
+
+  .oauth-info {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-md);
+  }
+
+  .oauth-info a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .oauth-info a:hover {
+    text-decoration: underline;
+  }
+
+  .oauth-input-row {
+    display: flex;
+    gap: var(--space-sm);
+  }
+
+  .oauth-input {
+    flex: 1;
+    padding: var(--space-sm) var(--space-md);
+    font-size: 13px;
+    font-family: 'SF Mono', Consolas, monospace;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+  }
+
+  .oauth-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .oauth-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .save-oauth-btn {
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .save-oauth-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .save-oauth-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .oauth-configured {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+  }
+
+  .oauth-value {
+    font-family: 'SF Mono', Consolas, monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+  }
+
+  .remove-oauth-btn {
+    padding: var(--space-xs) var(--space-md);
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .remove-oauth-btn:hover {
+    color: var(--domain-health);
+    border-color: var(--domain-health);
+  }
+
+  .oauth-message {
+    margin-top: var(--space-sm);
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  .oauth-message.success {
     color: var(--domain-family);
   }
 </style>

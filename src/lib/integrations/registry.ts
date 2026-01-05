@@ -155,7 +155,7 @@ export const recentWeather = derived(
   ($signals) => $signals.find(s => s.source === 'weather')
 );
 
-// Calendar events (from Google Calendar plugin)
+// Calendar events (from Google plugin)
 export const todayEvents = derived(
   registry.signals,
   ($signals) => {
@@ -166,7 +166,7 @@ export const todayEvents = derived(
 
     return $signals
       .filter(s =>
-        s.source === 'google-calendar' &&
+        s.source === 'google' &&
         s.type === 'event' &&
         new Date(s.data.startTime) >= today &&
         new Date(s.data.startTime) < tomorrow
@@ -183,7 +183,7 @@ export const upcomingEvents = derived(
     const now = new Date();
     return $signals
       .filter(s =>
-        s.source === 'google-calendar' &&
+        s.source === 'google' &&
         s.type === 'event' &&
         new Date(s.data.startTime) >= now
       )
@@ -192,6 +192,16 @@ export const upcomingEvents = derived(
       )
       .slice(0, 10); // Next 10 events
   }
+);
+
+// Important emails (from Google plugin)
+export const importantEmails = derived(
+  registry.signals,
+  ($signals) => $signals.filter(s =>
+    s.source === 'google' &&
+    s.type === 'message_received' &&
+    s.data.isImportant
+  ).slice(0, 5)
 );
 
 // =============================================================================
