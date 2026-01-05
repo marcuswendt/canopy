@@ -7,6 +7,7 @@
   import { sidebarOpen, initTheme } from '$lib/stores/ui';
   import { loadEntities, loadRelationships } from '$lib/stores/entities';
   import { rayState, needsOnboarding } from '$lib/coach/store';
+  import { initializePlugins, startPluginScheduler } from '$lib/integrations/init';
 
   let { children }: { children: Snippet } = $props();
 
@@ -17,6 +18,13 @@
     // Load data from database
     loadEntities();
     loadRelationships();
+
+    // Initialize plugin system (time, weather, WHOOP, etc.)
+    initializePlugins().then(() => {
+      // Start automatic sync scheduling after initialization
+      const stopScheduler = startPluginScheduler();
+      // Note: stopScheduler could be returned for cleanup if needed
+    });
 
     return cleanup;
   });

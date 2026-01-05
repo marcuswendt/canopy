@@ -137,11 +137,22 @@ export const todayStrain = derived(
   ($signals) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    return $signals.find(s => 
-      s.type === 'strain' && 
+    return $signals.find(s =>
+      s.type === 'strain' &&
       s.timestamp >= today
     );
   }
+);
+
+// Time & Weather signals (from default plugins)
+export const recentTime = derived(
+  registry.signals,
+  ($signals) => $signals.find(s => s.source === 'time')
+);
+
+export const recentWeather = derived(
+  registry.signals,
+  ($signals) => $signals.find(s => s.source === 'weather')
 );
 
 // =============================================================================
