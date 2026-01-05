@@ -698,6 +698,7 @@ export interface OnboardingResponse {
     needsConfirmation?: boolean;  // True if entity type is ambiguous and needs user confirmation
     priority?: 'critical' | 'active' | 'background';  // For goals and focuses: how important
     targetDate?: string;  // For goals: when to achieve (e.g., "May 2026", "this year")
+    date?: string;  // For events: the date (e.g., "March 30" for birthdays)
   }>;
 
   // Domains extracted from the user's last message
@@ -744,6 +745,10 @@ const ONBOARDING_RESPONSE_SCHEMA = {
           targetDate: {
             type: 'string',
             description: 'For goals: when to achieve (e.g., "May 2026", "this year", "Q2 2026")'
+          },
+          date: {
+            type: 'string',
+            description: 'For events: the date (e.g., "March 30" for birthdays, "Aug 15" for races)'
           }
         },
         required: ['name', 'type', 'domain']
@@ -830,10 +835,19 @@ CRITICAL RULES:
 - Only mark isComplete=true when you have a real picture of their life (not just domain names)
 
 ENTITY EXTRACTION RULES:
+⚠️ CRITICAL: NEVER invent or hallucinate entities. ONLY extract entities that are EXPLICITLY mentioned BY NAME in the user's text.
+- If the user doesn't mention "Astro", don't extract "Astro"
+- If the user doesn't mention "Vercel", don't extract "Vercel"
+- If you're not 100% certain the entity was mentioned, don't extract it
 - People: First names only, with relationship to user (wife, son, friend, colleague)
 - Companies: ONLY extract as 'company' if user explicitly states their role/ownership (e.g., "I'm CEO of", "I founded", "I work at")
 - External organizations (race organizers, vendors, services) should NOT be extracted as companies - they are external references
-- Events: Races, conferences, deadlines the user is participating in
+- Events: Races, conferences, deadlines, AND personal milestones (birthdays, anniversaries)
+  - When a person is mentioned with a date (e.g., "Elio 30 March 2025"), create BOTH:
+    1. A 'person' entity for the person
+    2. An 'event' entity for their birthday (e.g., "Elio's Birthday" with date "March 30")
+  - For wedding dates, create an anniversary event (e.g., "Wedding Anniversary" with date "Oct 11")
+  - Event dates should use the format suitable for annual recurrence (just month and day)
 - Projects: Work initiatives, side projects the user is actively working on
 - Set needsConfirmation=true for any company where ownership/role is unclear
 
@@ -855,6 +869,7 @@ FOCUS EXTRACTION RULES (important - read between the lines):
 - Examples from "My husband runs his own company... I want to support him in work-life balance":
   - "Partnership & Marriage" (focus, family) - relationship dynamics are clearly important
 - Focuses often span multiple explicit mentions - look for patterns
+- ⚠️ ALWAYS set needsConfirmation=true for focuses - they are interpretive and need user validation
 - Good focus names are 2-4 words, thematic: "Work-Life Balance", "Body & Fertility", "Mental Load", "Emotional Processing"
 - Set priority based on emotional weight: deeply felt concerns = critical, ongoing themes = active
 - Description should explain the underlying theme (what's really going on)
@@ -866,7 +881,7 @@ User's last message: "${context.messages[context.messages.length - 1]?.content |
     prompt,
     '', // Content is in the prompt
     ONBOARDING_RESPONSE_SCHEMA,
-    { temperature: 0.8, maxTokens: 1000 }
+    { temperature: 0.5, maxTokens: 2000 } // Lower temp to reduce hallucination, more tokens for complex responses
   );
 
   if (isError(result)) {
