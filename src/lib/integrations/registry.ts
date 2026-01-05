@@ -93,6 +93,11 @@ class PluginRegistry {
   get states() { return this.stateStore; }
   get signals() { return this.signalStore; }
   get events() { return this.eventStore; }
+
+  // Get recent signals (for inspector)
+  getRecentSignals(limit: number = 50): IntegrationSignal[] {
+    return get(this.signalStore).slice(0, limit);
+  }
 }
 
 // Singleton

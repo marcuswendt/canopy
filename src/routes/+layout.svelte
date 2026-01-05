@@ -4,10 +4,12 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import Sidebar from '$lib/components/Sidebar.svelte';
+  import DataInspector from '$lib/components/DataInspector.svelte';
   import { sidebarOpen, initTheme } from '$lib/stores/ui';
   import { loadEntities, loadRelationships } from '$lib/stores/entities';
-  import { rayState, needsOnboarding } from '$lib/coach/store';
+  import { rayState, needsOnboarding, rayStateLoaded } from '$lib/coach/store';
   import { initializePlugins, startPluginScheduler } from '$lib/integrations/init';
+  import { inspectorOpen } from '$lib/stores/inspector';
 
   let { children }: { children: Snippet } = $props();
 
@@ -26,12 +28,25 @@
       // Note: stopScheduler could be returned for cleanup if needed
     });
 
-    return cleanup;
+    // Keyboard shortcut for Data Inspector (Cmd+Shift+D)
+    function handleKeydown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        inspectorOpen.toggle();
+      }
+    }
+    window.addEventListener('keydown', handleKeydown);
+
+    return () => {
+      cleanup?.();
+      window.removeEventListener('keydown', handleKeydown);
+    };
   });
 
   // Redirect to onboarding if needed (but not if already there)
+  // Wait for ray state to load from persistence before making routing decisions
   $effect(() => {
-    if ($needsOnboarding && !$page.url.pathname.includes('onboarding')) {
+    if ($rayStateLoaded && $needsOnboarding && !$page.url.pathname.includes('onboarding')) {
       goto('/onboarding');
     }
   });
@@ -51,6 +66,9 @@
   <main class="main-content" class:full-width={!showSidebar}>
     {@render children()}
   </main>
+
+  <!-- Data Inspector (Cmd+Shift+D to toggle) -->
+  <DataInspector open={$inspectorOpen} onClose={() => inspectorOpen.close()} />
 </div>
 
 <style>
