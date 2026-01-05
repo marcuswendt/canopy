@@ -33,10 +33,13 @@
 </script>
 
 <div class="app-container">
+  <!-- Drag region for frameless window -->
+  <div class="window-drag-region"></div>
+
   {#if showSidebar}
     <Sidebar />
   {/if}
-  
+
   <main class="main-content" class:full-width={!showSidebar}>
     {@render children()}
   </main>
@@ -48,6 +51,17 @@
     height: 100vh;
     overflow: hidden;
     background: var(--bg-primary);
+    position: relative;
+  }
+
+  .window-drag-region {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 32px;
+    -webkit-app-region: drag;
+    z-index: 100;
   }
   
   .main-content {
