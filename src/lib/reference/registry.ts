@@ -16,6 +16,7 @@ import {
 } from './types';
 import { notionPlugin } from './notion';
 import { appleNotesPlugin } from './apple-notes';
+import { gmailPlugin } from './gmail';
 
 // =============================================================================
 // REGISTRY
@@ -87,6 +88,7 @@ export const referenceRegistry = new ReferenceRegistry();
 // Register default plugins
 referenceRegistry.register(notionPlugin);
 referenceRegistry.register(appleNotesPlugin);
+referenceRegistry.register(gmailPlugin);
 
 // =============================================================================
 // DERIVED STORES

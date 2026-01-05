@@ -155,6 +155,45 @@ export const recentWeather = derived(
   ($signals) => $signals.find(s => s.source === 'weather')
 );
 
+// Calendar events (from Google Calendar plugin)
+export const todayEvents = derived(
+  registry.signals,
+  ($signals) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    return $signals
+      .filter(s =>
+        s.source === 'google-calendar' &&
+        s.type === 'event' &&
+        new Date(s.data.startTime) >= today &&
+        new Date(s.data.startTime) < tomorrow
+      )
+      .sort((a, b) =>
+        new Date(a.data.startTime).getTime() - new Date(b.data.startTime).getTime()
+      );
+  }
+);
+
+export const upcomingEvents = derived(
+  registry.signals,
+  ($signals) => {
+    const now = new Date();
+    return $signals
+      .filter(s =>
+        s.source === 'google-calendar' &&
+        s.type === 'event' &&
+        new Date(s.data.startTime) >= now
+      )
+      .sort((a, b) =>
+        new Date(a.data.startTime).getTime() - new Date(b.data.startTime).getTime()
+      )
+      .slice(0, 10); // Next 10 events
+  }
+);
+
 // =============================================================================
 // PLUGIN ACTIONS
 // =============================================================================

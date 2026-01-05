@@ -5,7 +5,7 @@ import { extract, stream, isError, type AIMessage, type StreamCallbacks } from '
 import type { Entity, Memory } from '$lib/db/types';
 import type { ExtractedContent, EntitySuggestion } from '$lib/uploads';
 import { get } from 'svelte/store';
-import { recentTime, recentWeather, recentRecovery } from '$lib/integrations/registry';
+import { recentTime, recentWeather, recentRecovery, todayEvents } from '$lib/integrations/registry';
 import { gatherReferenceContext, formatContextForPrompt, type ReferenceContext } from '$lib/reference/registry';
 import { formatMemoriesForContext } from './memory';
 
@@ -300,14 +300,15 @@ Time of day: ${getTimeOfDay()}`;
 
 /**
  * Build context from plugin signals
- * Uses time, weather, and health signals from the plugin system
+ * Uses time, weather, health, and calendar signals from the plugin system
  */
 export function buildPluginContext(userName?: string): {
   temporal: string;
   weather?: string;
   capacity?: string;
+  agenda?: string;
 } {
-  const result: { temporal: string; weather?: string; capacity?: string } = {
+  const result: { temporal: string; weather?: string; capacity?: string; agenda?: string } = {
     temporal: '',
   };
 
@@ -367,6 +368,26 @@ Time of day: ${t.timeOfDay}`;
     }
   }
 
+  // Calendar context from Google Calendar plugin (if connected)
+  const events = get(todayEvents);
+  if (events && events.length > 0) {
+    const eventLines = events.slice(0, 5).map(e => {
+      const data = e.data as {
+        title: string;
+        formattedTime: string;
+        hasVideoCall?: boolean;
+        attendeeCount?: number;
+      };
+      let line = `- ${data.formattedTime}: ${data.title}`;
+      if (data.hasVideoCall) line += ' (video call)';
+      if (data.attendeeCount && data.attendeeCount > 0) {
+        line += ` (${data.attendeeCount} attendees)`;
+      }
+      return line;
+    });
+    result.agenda = `Today's agenda:\n${eventLines.join('\n')}`;
+  }
+
   return result;
 }
 
@@ -410,6 +431,11 @@ export function generateChatResponse(
   // Capacity context from WHOOP (if connected)
   if (pluginCtx?.capacity) {
     contextSection += `${pluginCtx.capacity}\n`;
+  }
+
+  // Calendar agenda (if connected)
+  if (pluginCtx?.agenda) {
+    contextSection += `\n${pluginCtx.agenda}\n`;
   }
 
   if (context.entities.length > 0) {
