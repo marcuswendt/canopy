@@ -39,6 +39,8 @@
   let newProfileLabel = $state('');
   let creatingProfile = $state(false);
   let deletingProfile = $state<string | null>(null);
+  let confirmDeleteProfile = $state<{ id: string; label: string } | null>(null);
+  let deleteConfirmText = $state('');
 
   // Danger Zone state
   let showResetConfirm = $state(false);
@@ -320,10 +322,23 @@
     }
   }
 
-  async function deleteProfileById(profileId: string) {
+  function initiateDeleteProfile(profileId: string, label: string) {
+    confirmDeleteProfile = { id: profileId, label };
+    deleteConfirmText = '';
+  }
+
+  function cancelDeleteProfile() {
+    confirmDeleteProfile = null;
+    deleteConfirmText = '';
+  }
+
+  async function confirmAndDeleteProfile() {
+    if (!confirmDeleteProfile || deleteConfirmText !== 'DELETE') return;
     if (deletingProfile) return;
 
+    const profileId = confirmDeleteProfile.id;
     deletingProfile = profileId;
+
     try {
       if (window.canopy?.deleteProfile) {
         const result = await window.canopy.deleteProfile(profileId);
@@ -339,6 +354,8 @@
       console.error('Profile deletion error:', error);
     } finally {
       deletingProfile = null;
+      confirmDeleteProfile = null;
+      deleteConfirmText = '';
     }
   }
 </script>
@@ -686,16 +703,55 @@
             {#if !profile.builtIn && currentProfile !== profile.id}
               <button
                 class="profile-delete-btn"
-                onclick={() => deleteProfileById(profile.id)}
-                disabled={!!deletingProfile}
+                onclick={() => initiateDeleteProfile(profile.id, profile.label)}
+                disabled={!!deletingProfile || !!confirmDeleteProfile}
                 title="Delete profile"
               >
-                {deletingProfile === profile.id ? '...' : '×'}
+                ×
               </button>
             {/if}
           </div>
         {/each}
       </div>
+
+      {#if confirmDeleteProfile}
+        <div class="delete-confirm-dialog">
+          <div class="delete-confirm-warning">
+            <span class="warning-icon">⚠️</span>
+            <strong>Delete "{confirmDeleteProfile.label}"?</strong>
+          </div>
+          <p class="delete-confirm-text">
+            This will permanently delete the database and all uploaded files for this profile. This cannot be undone.
+          </p>
+          <div class="delete-confirm-input">
+            <label for="delete-confirm">Type <strong>DELETE</strong> to confirm:</label>
+            <input
+              id="delete-confirm"
+              type="text"
+              bind:value={deleteConfirmText}
+              placeholder="DELETE"
+              class="confirm-input"
+              disabled={!!deletingProfile}
+            />
+          </div>
+          <div class="delete-confirm-actions">
+            <button
+              class="delete-confirm-btn danger"
+              onclick={confirmAndDeleteProfile}
+              disabled={deleteConfirmText !== 'DELETE' || !!deletingProfile}
+            >
+              {deletingProfile ? 'Deleting...' : 'Delete Profile'}
+            </button>
+            <button
+              class="delete-confirm-btn cancel"
+              onclick={cancelDeleteProfile}
+              disabled={!!deletingProfile}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      {/if}
 
       {#if showCreateProfile}
         <div class="create-profile-form">
@@ -1405,6 +1461,130 @@
   }
 
   .profile-delete-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .delete-confirm-dialog {
+    margin-top: var(--space-md);
+    padding: var(--space-lg);
+    background: var(--bg-primary);
+    border: 2px solid var(--domain-health);
+    border-radius: var(--radius-lg);
+    animation: slideIn 0.2s ease;
+  }
+
+  @keyframes slideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .delete-confirm-warning {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+  }
+
+  .warning-icon {
+    font-size: 20px;
+  }
+
+  .delete-confirm-warning strong {
+    font-size: 16px;
+    color: var(--domain-health);
+  }
+
+  .delete-confirm-text {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-md);
+    line-height: 1.5;
+  }
+
+  .delete-confirm-input {
+    margin-bottom: var(--space-md);
+  }
+
+  .delete-confirm-input label {
+    display: block;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-xs);
+  }
+
+  .delete-confirm-input strong {
+    color: var(--domain-health);
+    font-family: 'SF Mono', monospace;
+  }
+
+  .confirm-input {
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    font-size: 14px;
+    font-family: 'SF Mono', monospace;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+  }
+
+  .confirm-input:focus {
+    outline: none;
+    border-color: var(--domain-health);
+  }
+
+  .confirm-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .delete-confirm-actions {
+    display: flex;
+    gap: var(--space-sm);
+  }
+
+  .delete-confirm-btn {
+    flex: 1;
+    padding: var(--space-sm) var(--space-md);
+    font-size: 14px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .delete-confirm-btn.danger {
+    background: var(--domain-health);
+    color: white;
+    border: none;
+  }
+
+  .delete-confirm-btn.danger:hover:not(:disabled) {
+    background: #dc2626;
+  }
+
+  .delete-confirm-btn.danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .delete-confirm-btn.cancel {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  .delete-confirm-btn.cancel:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+  }
+
+  .delete-confirm-btn.cancel:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
