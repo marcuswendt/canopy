@@ -38,6 +38,10 @@ export type OnboardingPhase =
   | 'profile'             // Name, location, optional details
   | 'domains'
   | 'domain-discovery'    // Deep dive into each domain
+  | 'work-details'        // Work-specific questions
+  | 'family-details'      // Family members
+  | 'family-events'       // Upcoming family events
+  | 'health-details'      // Health/fitness goals
   | 'persona'             // Digital presence
   | 'integrations'
   | 'review'
@@ -97,7 +101,19 @@ I work best when I understand your life. Let's spend 5 minutes so I can actually
     askDomains: `What are the main areas of your life that take your attention?
 
 Most people have 3-5: work, family, health, a side project...`,
-    
+
+    askWorkDetails: `Tell me about work. What's on your plate right now?
+
+Projects, deadlines, people you're working with—whatever comes to mind.`,
+
+    askFamilyDetails: `Now family. Who should I know about?
+
+Names, ages, anything that helps me understand when you mention them.`,
+
+    askHealthDetails: `How about health or fitness? Anything you're working on?
+
+Training goals, wellness focus, things you're tracking...`,
+
     confirmDomains: (domains: string[]) => 
       `Got it. ${domains.length} domains:\n\n${domains.map(d => `  ◆ ${d}`).join('\n')}\n\nLet's go deep on each one—starting with ${domains[0]}.`,
     
