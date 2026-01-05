@@ -1,0 +1,94 @@
+{
+  "name": "Marcus Wendt",
+  "email": "marcus@field.io",
+  "location": "Wellington, New Zealand (visiting) / London, UK (home)",
+
+  "inputs": [
+    {
+      "turn": 1,
+      "context": "work",
+      "text": "Im the founder + Creative CEO of FIELD.IO a design studio based in London, UK + Berlin, DE.\n\nYou can find us here: http://www.field.io\nAnd more about me: https://www.marcuswendt.io/\n\nIt's Jan 5, we're back to work after a busy 2025. Priorities right now are:\n- HR key hires for finance, shift from dual-headed to distributed leadership\n- 2026 Strategy + Setting priorities\n- Our cashflow + new biz pipeline (as always)\n- Continuing this discussion with my MD about his role\n- Brand + PR (which feeds into newbiz)\n- Our Berlin studio plans\n- Our Hong Kong expansion plans\n\nand in general providing leadership and vision to our team of ~50 employees!"
+    },
+    {
+      "turn": 2,
+      "context": "family",
+      "text": "My kids:\nElio Marcus Wendt 30 March 2025\nLuca Milai Wendt 03 May 2022\nRafael George Anthony Wendt 02 February 2020\n\nMy wife: Celine Therese Wendt 17 July 1983 (married 11 Oct 2019)\n\nWe're currently in Wellington, New Zealand on a visit to the grandparents Tony + Maureen Parun (here in Petone, Lower Hutt)\n\nWe live in our house at 286 Capworth St, E10 7BG London, UK.\nWe're currently in the middle of a kitchen + renovation project... hopefully completed around April-May 2026."
+    },
+    {
+      "turn": 3,
+      "context": "friends",
+      "text": "Also my closest friends:\nWill Denning, Philipp von Lintel, Christian Klotz, my friend + neighbour Andrea Cuius (currently very sick/ stage-4 cancer),\nthe Epping Eagles (Will Denning, Ondrej Zunka, Lukas Voir) my London gravel bike designer friends"
+    },
+    {
+      "turn": 4,
+      "context": "sport",
+      "text": "Im a passionate cyclist/ runner/ adventurer.\nFor 2026 I signed up for my most ambitious calendar yet!\n\nULTRA-BIKEPACKING SEASON:\n- FURTHER LOSTWAYS - March 19 (750km, early season opener)\n- HELLENIC MOUNTAIN RACE - May 23 (922km Greece) - PRIMARY GOAL, training for CTL 130\n- SILK ROAD MOUNTAIN RACE - August 15 (2,052km Kyrgyzstan) - aim to complete as proud mid-pack\n- TAURUS MOUNTAIN RACE - October 14 (1,460km Turkey) - season finale\n\nhttps://www.themountainraces.cc\nhttps://www.strava.com/athletes/13736588"
+    },
+    {
+      "turn": 5,
+      "context": "side-projects",
+      "text": "I'm currently exploring several product / startup ideas:\n\n- Meridian: A personal fitness command center with AI coaching for serious endurance athletes.\n- Cascade: A visual programming framework for creative coders.\n- Lucient: An AI-native operating system for physical spaces.\n- Streifzüge: My artistic practice focused on capturing fleeting moments."
+    }
+  ],
+
+  "expected": {
+    "domains": [
+      { "name": "Work", "type": "work", "notes": "FIELD.IO, design studio leadership" },
+      { "name": "Family", "type": "family", "notes": "Wife Celine, 3 kids" },
+      { "name": "Friends", "type": "personal", "notes": "Close friends, cycling crew" },
+      { "name": "Sport", "type": "sport", "notes": "Ultra-bikepacking, cycling" },
+      { "name": "Side-Projects", "type": "personal", "notes": "Startup ideas, artistic practice" }
+    ],
+
+    "entities": {
+      "people": [
+        { "name": "Celine", "relationship": "wife", "domain": "family", "dob": "1983-07-17" },
+        { "name": "Rafael", "relationship": "son", "domain": "family", "dob": "2020-02-02", "age": 4 },
+        { "name": "Luca", "relationship": "son", "domain": "family", "dob": "2022-05-03", "age": 2 },
+        { "name": "Elio", "relationship": "son", "domain": "family", "dob": "2025-03-30", "age": 0 },
+        { "name": "Tony", "relationship": "father-in-law", "domain": "family" },
+        { "name": "Maureen", "relationship": "mother-in-law", "domain": "family" },
+        { "name": "Will Denning", "relationship": "friend", "domain": "personal", "notes": "Epping Eagles" },
+        { "name": "Andrea Cuius", "relationship": "friend/neighbour", "domain": "personal", "notes": "stage-4 cancer" }
+      ],
+
+      "companies": [
+        { "name": "FIELD.IO", "role": "Founder & Creative CEO", "domain": "work", "url": "http://www.field.io" },
+        { "name": "FIELD.IO London", "parent": "FIELD.IO", "domain": "work" },
+        { "name": "FIELD.IO Berlin", "parent": "FIELD.IO", "domain": "work" }
+      ],
+
+      "events": [
+        { "name": "Further Lostways", "type": "race", "date": "2026-03-19", "domain": "sport", "distance": "750km" },
+        { "name": "Hellenic Mountain Race", "type": "race", "date": "2026-05-23", "domain": "sport", "distance": "922km", "priority": "primary" },
+        { "name": "Silk Road Mountain Race", "type": "race", "date": "2026-08-15", "domain": "sport", "distance": "2052km" },
+        { "name": "Taurus Mountain Race", "type": "race", "date": "2026-10-14", "domain": "sport", "distance": "1460km" },
+        { "name": "Kitchen Renovation", "type": "project", "date": "2026-04", "domain": "family" }
+      ],
+
+      "projects": [
+        { "name": "HR Key-hires", "domain": "work", "priority": "active" },
+        { "name": "2026 Strategy", "domain": "work", "priority": "active" },
+        { "name": "Berlin Studio", "domain": "work" },
+        { "name": "Hong Kong Expansion", "domain": "work" },
+        { "name": "Meridian", "domain": "personal", "type": "side-project" },
+        { "name": "Cascade", "domain": "personal", "type": "side-project" },
+        { "name": "Lucient", "domain": "personal", "type": "side-project" },
+        { "name": "Streifzüge", "domain": "personal", "type": "artistic-practice" }
+      ],
+
+      "groups": [
+        { "name": "Epping Eagles", "type": "cycling-crew", "domain": "personal", "members": ["Will Denning", "Ondrej Zunka", "Lukas Voir"] }
+      ]
+    },
+
+    "urls": [
+      { "url": "http://www.field.io", "type": "company", "scope": "work" },
+      { "url": "https://www.marcuswendt.io/", "type": "personal-site", "scope": "work" },
+      { "url": "https://www.themountainraces.cc", "type": "reference", "scope": "sport" },
+      { "url": "https://www.strava.com/athletes/13736588", "type": "profile", "scope": "sport" }
+    ],
+
+    "integrations_to_suggest": ["whoop", "strava", "google-calendar"]
+  }
+}
