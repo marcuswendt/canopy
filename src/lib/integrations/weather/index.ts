@@ -32,8 +32,9 @@ export const weatherPlugin: CanopyPlugin = {
   description: 'Local weather conditions for context-aware suggestions',
   icon: '🌤️',
   domains: ['personal'],
+  category: 'context',
 
-  // No auth needed (uses free Open-Meteo API)
+  // No auth needed (uses free Open-Meteo API) - always enabled
   authType: 'none',
 
   // Sync every 30 minutes

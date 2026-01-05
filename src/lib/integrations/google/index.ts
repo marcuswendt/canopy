@@ -156,6 +156,14 @@ class GoogleAPI {
     return endOfWeek;
   }
 
+  // ======================== PROFILE ========================
+
+  async getUserProfile(): Promise<{ email: string; name?: string; picture?: string }> {
+    return this.fetch<{ email: string; name?: string; picture?: string }>(
+      'https://www.googleapis.com/oauth2/v2/userinfo'
+    );
+  }
+
   // ======================== GMAIL ========================
 
   async searchMessages(query: string, options?: {
@@ -376,7 +384,11 @@ export const googlePlugin: CanopyPlugin = {
   name: 'Google',
   description: 'Calendar events and Gmail inbox',
   icon: '🔷',
-  domains: ['work', 'personal', 'family'],
+  domains: ['productivity', 'work', 'personal', 'family'],
+  category: 'productivity',
+
+  // Multiple Google accounts can be connected (marcus@field.io, hello@field.io)
+  multiInstance: true,
 
   authType: 'oauth2',
   authConfig: {
@@ -384,6 +396,8 @@ export const googlePlugin: CanopyPlugin = {
     tokenUrl: 'https://oauth2.googleapis.com/token',
     clientId: '', // Set from environment or settings
     scopes: [
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile',
       'https://www.googleapis.com/auth/calendar.readonly',
       'https://www.googleapis.com/auth/calendar.events.readonly',
       'https://www.googleapis.com/auth/gmail.readonly',
@@ -447,6 +461,22 @@ export const googlePlugin: CanopyPlugin = {
     if (typeof window === 'undefined' || !window.canopy) return null;
     const state = await window.canopy.getPluginState(PLUGIN_ID);
     return state?.last_sync ? new Date(state.last_sync) : null;
+  },
+
+  getAccountInfo: async () => {
+    const token = await getStoredToken();
+    if (!token) return null;
+
+    try {
+      googleApi.setAccessToken(token);
+      const profile = await googleApi.getUserProfile();
+      return {
+        id: profile.email,
+        label: profile.email,  // Could also use profile.name if preferred
+      };
+    } catch {
+      return null;
+    }
   },
 
   sync: async (_since?: Date): Promise<IntegrationSignal[]> => {

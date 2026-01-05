@@ -1,8 +1,43 @@
 // Plugin Registry
 // Manages plugin registration, state, and lifecycle
+// Supports multi-instance plugins (e.g., multiple Google accounts)
 
 import type { CanopyPlugin, PluginState, IntegrationSignal, SyncEvent } from './types';
 import { writable, derived, get } from 'svelte/store';
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+
+/**
+ * Generate a state key for plugin instance
+ * Single-instance plugins: "google" -> "google"
+ * Multi-instance plugins: "google" + "marcus@field.io" -> "google:marcus@field.io"
+ */
+function getStateKey(pluginId: string, instanceId?: string): string {
+  return instanceId ? `${pluginId}:${instanceId}` : pluginId;
+}
+
+/**
+ * Parse a state key back to pluginId and optional instanceId
+ */
+function parseStateKey(key: string): { pluginId: string; instanceId?: string } {
+  const colonIndex = key.indexOf(':');
+  if (colonIndex === -1) {
+    return { pluginId: key };
+  }
+  return {
+    pluginId: key.substring(0, colonIndex),
+    instanceId: key.substring(colonIndex + 1),
+  };
+}
+
+/**
+ * Generate unique instance ID for multi-instance plugins
+ */
+function generateInstanceId(): string {
+  return `inst_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+}
 
 // =============================================================================
 // REGISTRY
@@ -10,6 +45,7 @@ import { writable, derived, get } from 'svelte/store';
 
 class PluginRegistry {
   private plugins: Map<string, CanopyPlugin> = new Map();
+  // State keys can be "pluginId" (single instance) or "pluginId:instanceId" (multi-instance)
   private stateStore = writable<Map<string, PluginState>>(new Map());
   private signalStore = writable<IntegrationSignal[]>([]);
   private eventStore = writable<SyncEvent[]>([]);
@@ -61,13 +97,56 @@ class PluginRegistry {
     return this.getAll().filter(p => states.get(p.id)?.connected);
   }
   
-  // Update plugin state
-  updateState(pluginId: string, update: Partial<PluginState>): void {
+  // Update plugin state (supports both single and multi-instance)
+  updateState(pluginId: string, update: Partial<PluginState>, instanceId?: string): void {
+    const key = getStateKey(pluginId, instanceId);
     this.stateStore.update(states => {
-      const current = states.get(pluginId);
+      const current = states.get(key);
       if (current) {
-        states.set(pluginId, { ...current, ...update });
+        states.set(key, { ...current, ...update });
+      } else {
+        // Create new state entry
+        states.set(key, {
+          pluginId,
+          enabled: false,
+          connected: false,
+          lastSync: null,
+          lastError: null,
+          settings: {},
+          instanceId,
+          ...update,
+        });
       }
+      return states;
+    });
+  }
+
+  // Get all instances of a plugin (for multi-instance plugins)
+  getInstances(pluginId: string): PluginState[] {
+    const states = get(this.stateStore);
+    const instances: PluginState[] = [];
+
+    for (const [key, state] of states.entries()) {
+      const parsed = parseStateKey(key);
+      if (parsed.pluginId === pluginId) {
+        instances.push(state);
+      }
+    }
+
+    return instances;
+  }
+
+  // Get state for a specific plugin/instance
+  getState(pluginId: string, instanceId?: string): PluginState | undefined {
+    const key = getStateKey(pluginId, instanceId);
+    return get(this.stateStore).get(key);
+  }
+
+  // Remove a plugin instance (for disconnecting multi-instance plugins)
+  removeInstance(pluginId: string, instanceId: string): void {
+    const key = getStateKey(pluginId, instanceId);
+    this.stateStore.update(states => {
+      states.delete(key);
       return states;
     });
   }
@@ -251,80 +330,134 @@ export async function disablePlugin(pluginId: string): Promise<void> {
   registry.updateState(pluginId, { enabled: false });
 }
 
-export async function connectPlugin(pluginId: string): Promise<void> {
+/**
+ * Connect a plugin
+ * For multi-instance plugins: returns the new instanceId
+ * For single-instance plugins: connects without instanceId
+ */
+export async function connectPlugin(pluginId: string): Promise<string | undefined> {
   const plugin = registry.get(pluginId);
   if (!plugin) throw new Error(`Plugin ${pluginId} not found`);
-  
+
+  // For single-instance plugins, check if already connected
+  if (!plugin.multiInstance) {
+    const existingState = registry.getState(pluginId);
+    if (existingState?.connected) {
+      throw new Error(`${plugin.name} is already connected`);
+    }
+  }
+
+  // Generate instanceId for multi-instance plugins
+  const instanceId = plugin.multiInstance ? generateInstanceId() : undefined;
+
   try {
     await plugin.connect();
-    registry.updateState(pluginId, { connected: true, lastError: null });
-    
+
+    // Get account info for multi-instance plugins
+    let accountId: string | undefined;
+    let accountLabel: string | undefined;
+
+    if (plugin.multiInstance && plugin.getAccountInfo) {
+      const accountInfo = await plugin.getAccountInfo();
+      if (accountInfo) {
+        accountId = accountInfo.id;
+        accountLabel = accountInfo.label;
+      }
+    }
+
+    registry.updateState(pluginId, {
+      connected: true,
+      lastError: null,
+      accountId,
+      accountLabel,
+      instanceId,
+    }, instanceId);
+
     // Initial sync if configured
     if (plugin.syncSchedule.syncOnConnect) {
-      await syncPlugin(pluginId);
+      await syncPlugin(pluginId, instanceId);
     }
+
+    return instanceId;
   } catch (error) {
-    registry.updateState(pluginId, { 
-      connected: false, 
-      lastError: error instanceof Error ? error.message : 'Connection failed' 
-    });
+    registry.updateState(pluginId, {
+      connected: false,
+      lastError: error instanceof Error ? error.message : 'Connection failed',
+    }, instanceId);
     throw error;
   }
 }
 
-export async function disconnectPlugin(pluginId: string): Promise<void> {
+/**
+ * Disconnect a plugin instance
+ * For multi-instance: removes the specific instance
+ * For single-instance: disconnects the plugin
+ */
+export async function disconnectPlugin(pluginId: string, instanceId?: string): Promise<void> {
   const plugin = registry.get(pluginId);
   if (!plugin) throw new Error(`Plugin ${pluginId} not found`);
-  
+
   await plugin.disconnect();
-  registry.updateState(pluginId, { connected: false });
+
+  if (plugin.multiInstance && instanceId) {
+    // Remove the specific instance
+    registry.removeInstance(pluginId, instanceId);
+  } else {
+    // Single-instance: just update state
+    registry.updateState(pluginId, { connected: false, accountId: undefined, accountLabel: undefined });
+  }
 }
 
-export async function syncPlugin(pluginId: string): Promise<IntegrationSignal[]> {
+/**
+ * Sync a plugin instance
+ */
+export async function syncPlugin(pluginId: string, instanceId?: string): Promise<IntegrationSignal[]> {
   const plugin = registry.get(pluginId);
   if (!plugin) throw new Error(`Plugin ${pluginId} not found`);
-  
+
+  const stateKey = instanceId ? `${pluginId}:${instanceId}` : pluginId;
+
   registry.addEvent({
     type: 'sync_started',
-    pluginId,
+    pluginId: stateKey,
     timestamp: new Date(),
   });
-  
+
   const startTime = Date.now();
-  
+
   try {
     const lastSync = await plugin.getLastSync();
     const signals = await plugin.sync(lastSync ?? undefined);
-    
+
     registry.addSignals(signals);
-    registry.updateState(pluginId, { 
+    registry.updateState(pluginId, {
       lastSync: new Date().toISOString(),
       lastError: null,
-    });
-    
+    }, instanceId);
+
     registry.addEvent({
       type: 'sync_completed',
-      pluginId,
+      pluginId: stateKey,
       timestamp: new Date(),
       data: {
         signalCount: signals.length,
         duration: Date.now() - startTime,
       },
     });
-    
+
     return signals;
-    
+
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Sync failed';
-    registry.updateState(pluginId, { lastError: errorMessage });
-    
+    registry.updateState(pluginId, { lastError: errorMessage }, instanceId);
+
     registry.addEvent({
       type: 'sync_failed',
-      pluginId,
+      pluginId: stateKey,
       timestamp: new Date(),
       data: { error: errorMessage },
     });
-    
+
     throw error;
   }
 }

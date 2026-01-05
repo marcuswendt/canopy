@@ -36,8 +36,9 @@ export const timePlugin: CanopyPlugin = {
   description: 'Current time, timezone, and date context for Ray',
   icon: '🕐',
   domains: ['personal'],
+  category: 'context',
 
-  // No auth needed
+  // No auth needed - always enabled
   authType: 'none',
 
   // Sync every minute to keep time fresh

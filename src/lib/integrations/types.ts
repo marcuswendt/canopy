@@ -84,8 +84,16 @@ export interface CanopyPlugin {
   name: string;
   description: string;
   icon: string;
-  domains: Array<'health' | 'sport' | 'work' | 'family' | 'personal'>;
-  
+  domains: Array<'health' | 'sport' | 'work' | 'family' | 'personal' | 'productivity'>;
+
+  // UI Category (for settings grouping)
+  category?: 'health-fitness' | 'productivity' | 'context';
+
+  // Multi-instance support
+  // When true, users can connect multiple accounts (e.g., multiple Google accounts)
+  // When false or undefined, only one connection is allowed (e.g., WHOOP)
+  multiInstance?: boolean;
+
   // Auth
   authType: 'oauth2' | 'api_key' | 'none';
   authConfig?: OAuthConfig;
@@ -110,6 +118,10 @@ export interface CanopyPlugin {
   
   // Optional: Settings UI
   settingsComponent?: string;  // Svelte component path
+
+  // Optional: Get account info for multi-instance plugins
+  // Returns the account identifier (e.g., email for Google, workspace name for Notion)
+  getAccountInfo?: () => Promise<{ id: string; label: string } | null>;
 }
 
 export interface OAuthConfig {
@@ -158,6 +170,15 @@ export interface PluginState {
   lastSync: string | null;
   lastError: string | null;
   settings: Record<string, any>;
+
+  // For multi-instance plugins: identifies which account this is
+  // e.g., "marcus@field.io" for Google, "workspace_123" for Notion
+  accountId?: string;
+  accountLabel?: string;  // Display name: "marcus@field.io" or "Field Studio Workspace"
+
+  // Instance ID for multi-instance plugins (pluginId remains "google", instanceId is unique)
+  instanceId?: string;
+
   // Tokens stored separately in secure storage
 }
 

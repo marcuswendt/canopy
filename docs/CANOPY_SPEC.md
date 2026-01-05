@@ -454,10 +454,26 @@ Extracted facts from conversations that persist:
 |----------|-------------------|-------|
 | **Health & Fitness** | WHOOP, Oura, Apple Health | Biometrics, recovery, sleep |
 | **Activity & Sport** | Strava, Wahoo, Garmin | Training, workouts (future) |
-| **Productivity** | Calendar, Basecamp | Events, tasks (future) |
+| **Productivity** | Google (Gmail + Calendar), Notion | Events, tasks, email (future) |
 | **Context** | Time, Weather | Always enabled, no auth |
 
 This keeps the architecture clean: each integration is self-contained with its own auth, sync schedule, and signal format.
+
+### Single-Instance vs Multi-Instance Plugins
+
+Some plugins are tied to a single identity (WHOOP tracks your body—you only need one). Others can have multiple accounts connected simultaneously.
+
+| Type                 | Examples                   | Use Case                               |
+|----------------------|----------------------------|----------------------------------------|
+| **Single-instance**  | WHOOP, Oura, Apple Health  | One identity per person                |
+| **Multi-instance**   | Google, Notion             | Multiple accounts (work, personal)     |
+
+**Multi-instance plugins display the connected account:**
+
+- Google: `marcus@field.io` (email from OAuth)
+- Notion: `Field Studio Workspace` (workspace name)
+
+Users can connect additional accounts of the same type. Each instance syncs independently and stores its own credentials.
 
 ### Signal Plugins (Data IN)
 Sync external sources into Canopy:

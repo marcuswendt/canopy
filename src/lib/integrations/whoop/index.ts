@@ -284,7 +284,11 @@ export const whoopPlugin: CanopyPlugin = {
   description: 'Recovery, sleep, and strain tracking',
   icon: '💚',
   domains: ['health', 'sport'],
-  
+  category: 'health-fitness',
+
+  // WHOOP is tied to your body - only one account needed
+  multiInstance: false,
+
   authType: 'oauth2',
   authConfig: {
     authUrl: 'https://api.prod.whoop.com/oauth/oauth2/auth',
