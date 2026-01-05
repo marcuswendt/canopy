@@ -22,6 +22,13 @@
   let googleMessage = $state('');
   let savingGoogle = $state(false);
 
+  // WHOOP OAuth state
+  let whoopClientId = $state('');
+  let whoopClientSecret = $state('');
+  let whoopMessage = $state('');
+  let savingWhoop = $state(false);
+  let hasWhoopCreds = $state(false);
+
   // Register plugins on mount
   onMount(async () => {
     registry.register(whoopPlugin);
@@ -34,6 +41,12 @@
 
     // Load Google OAuth client ID
     googleClientId = localStorage.getItem('google_oauth_client_id') || '';
+
+    // Check if WHOOP credentials are configured
+    if (window.canopy?.getSecret) {
+      const whoopId = await window.canopy.getSecret('whoop_client_id');
+      hasWhoopCreds = !!whoopId;
+    }
   });
 
   async function saveProfile() {
@@ -108,6 +121,46 @@
       setTimeout(() => googleMessage = '', 2000);
     } catch (error) {
       googleMessage = 'Failed to remove Client ID';
+    }
+  }
+
+  async function saveWhoopCredentials() {
+    if (!whoopClientId.trim() || !whoopClientSecret.trim()) return;
+    savingWhoop = true;
+    whoopMessage = '';
+
+    try {
+      if (window.canopy?.setSecret) {
+        await window.canopy.setSecret('whoop_client_id', whoopClientId.trim());
+        await window.canopy.setSecret('whoop_client_secret', whoopClientSecret.trim());
+        hasWhoopCreds = true;
+        whoopClientId = '';
+        whoopClientSecret = '';
+        whoopMessage = 'WHOOP credentials saved';
+        setTimeout(() => whoopMessage = '', 2000);
+      } else {
+        whoopMessage = 'Settings only available in Electron app';
+      }
+    } catch (error) {
+      whoopMessage = 'Failed to save credentials';
+    } finally {
+      savingWhoop = false;
+    }
+  }
+
+  async function removeWhoopCredentials() {
+    try {
+      if (window.canopy?.deleteSecret) {
+        await window.canopy.deleteSecret('whoop_client_id');
+        await window.canopy.deleteSecret('whoop_client_secret');
+        await window.canopy.deleteSecret('whoop_access_token');
+        await window.canopy.deleteSecret('whoop_refresh_token');
+        hasWhoopCreds = false;
+        whoopMessage = 'WHOOP credentials removed';
+        setTimeout(() => whoopMessage = '', 2000);
+      }
+    } catch (error) {
+      whoopMessage = 'Failed to remove credentials';
     }
   }
 
@@ -284,27 +337,6 @@
           </div>
         </div>
         
-        <div class="plugin-card placeholder">
-          <div class="plugin-icon">📧</div>
-          <div class="plugin-info">
-            <div class="plugin-name">Gmail</div>
-            <div class="plugin-description">Email context and reminders</div>
-          </div>
-          <div class="plugin-actions">
-            <button class="connect-btn" disabled>Coming Soon</button>
-          </div>
-        </div>
-        
-        <div class="plugin-card placeholder">
-          <div class="plugin-icon">📅</div>
-          <div class="plugin-info">
-            <div class="plugin-name">Calendar</div>
-            <div class="plugin-description">Events and scheduling</div>
-          </div>
-          <div class="plugin-actions">
-            <button class="connect-btn" disabled>Coming Soon</button>
-          </div>
-        </div>
       </div>
     </section>
 
@@ -449,6 +481,54 @@
 
         {#if googleMessage}
           <p class="oauth-message" class:success={googleMessage.includes('saved')}>{googleMessage}</p>
+        {/if}
+      </div>
+
+      <div class="oauth-card" style="margin-top: var(--space-md);">
+        <div class="oauth-header">
+          <span class="oauth-label">WHOOP OAuth Credentials</span>
+          {#if hasWhoopCreds}
+            <span class="oauth-status configured">Configured</span>
+          {:else}
+            <span class="oauth-status">Not configured</span>
+          {/if}
+        </div>
+
+        <p class="oauth-info">
+          Required for WHOOP integration. Get your credentials from <a href="https://developer.whoop.com" target="_blank" rel="noopener">developer.whoop.com</a>
+        </p>
+
+        {#if hasWhoopCreds}
+          <div class="oauth-configured">
+            <span class="oauth-value">Credentials saved securely</span>
+            <button class="remove-oauth-btn" onclick={removeWhoopCredentials}>Remove</button>
+          </div>
+        {:else}
+          <div class="oauth-fields">
+            <input
+              type="text"
+              bind:value={whoopClientId}
+              placeholder="Client ID"
+              class="oauth-input"
+            />
+            <input
+              type="password"
+              bind:value={whoopClientSecret}
+              placeholder="Client Secret"
+              class="oauth-input"
+            />
+            <button
+              class="save-oauth-btn"
+              onclick={saveWhoopCredentials}
+              disabled={!whoopClientId.trim() || !whoopClientSecret.trim() || savingWhoop}
+            >
+              {savingWhoop ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        {/if}
+
+        {#if whoopMessage}
+          <p class="oauth-message" class:success={whoopMessage.includes('saved')}>{whoopMessage}</p>
         {/if}
       </div>
     </section>
@@ -885,6 +965,17 @@
   .oauth-input-row {
     display: flex;
     gap: var(--space-sm);
+  }
+
+  .oauth-fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .oauth-fields .save-oauth-btn {
+    align-self: flex-start;
+    margin-top: var(--space-xs);
   }
 
   .oauth-input {
