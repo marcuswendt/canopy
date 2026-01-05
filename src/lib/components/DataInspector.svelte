@@ -91,6 +91,49 @@
     return { byType, byDomain, total: dbEntities.length };
   });
 
+  // Only show connected reference sources
+  let connectedRefPlugins = $derived(
+    $referencePlugins.filter(p => $referenceStates.get(p.id)?.connected)
+  );
+
+  // Only show signal plugins that have been connected (have synced at least once)
+  let connectedSignalPlugins = $derived(
+    $allPlugins.filter(p => {
+      const state = $pluginStates.get(p.id);
+      return state?.connected || state?.lastSync;
+    })
+  );
+
+  // Context capacity estimation (approximate tokens)
+  const MAX_CONTEXT_TOKENS = 128000; // Claude's context window
+
+  let contextCapacity = $derived(() => {
+    // Rough token estimates per item type
+    const entityTokens = dbEntities.reduce((sum, e) => {
+      return sum + 20 + (e.name.length / 4) + ((e.notes?.length || 0) / 4);
+    }, 0);
+
+    const memoryTokens = dbMemories.reduce((sum, m) => {
+      return sum + 10 + (m.content.length / 4);
+    }, 0);
+
+    const signalTokens = $integrationSignals.slice(0, 50).reduce((sum, s) => {
+      return sum + 15 + (JSON.stringify(s.data).length / 4);
+    }, 0);
+
+    const totalTokens = Math.round(entityTokens + memoryTokens + signalTokens);
+    const percentage = Math.min(100, Math.round((totalTokens / MAX_CONTEXT_TOKENS) * 100));
+
+    return {
+      used: totalTokens,
+      max: MAX_CONTEXT_TOKENS,
+      percentage,
+      entities: Math.round(entityTokens),
+      memories: Math.round(memoryTokens),
+      signals: Math.round(signalTokens)
+    };
+  });
+
   function toggleGroup(type: string) {
     const next = new Set(collapsedGroups);
     if (next.has(type)) {
@@ -172,13 +215,6 @@
       </button>
       <button
         class="tab"
-        class:active={activeTab === 'context'}
-        onclick={() => activeTab = 'context'}
-      >
-        AI Context
-      </button>
-      <button
-        class="tab"
         class:active={activeTab === 'integrations'}
         onclick={() => activeTab = 'integrations'}
       >
@@ -190,6 +226,13 @@
         onclick={() => activeTab = 'signals'}
       >
         Signals
+      </button>
+      <button
+        class="tab"
+        class:active={activeTab === 'context'}
+        onclick={() => activeTab = 'context'}
+      >
+        Context
       </button>
     </nav>
 
@@ -381,72 +424,87 @@
         </div>
       {:else if activeTab === 'context'}
         <div class="context-section">
+          <h3>Context Window Capacity</h3>
+          <div class="capacity-meter">
+            <div class="capacity-bar">
+              <div
+                class="capacity-fill"
+                class:low={contextCapacity().percentage < 25}
+                class:medium={contextCapacity().percentage >= 25 && contextCapacity().percentage < 75}
+                class:high={contextCapacity().percentage >= 75}
+                style="width: {contextCapacity().percentage}%"
+              ></div>
+            </div>
+            <div class="capacity-label">
+              <span class="capacity-used">{contextCapacity().used.toLocaleString()}</span>
+              <span class="capacity-sep">/</span>
+              <span class="capacity-max">{contextCapacity().max.toLocaleString()} tokens</span>
+              <span class="capacity-pct">({contextCapacity().percentage}%)</span>
+            </div>
+          </div>
+          <div class="capacity-breakdown">
+            <div class="breakdown-item">
+              <span class="breakdown-label">Entities</span>
+              <span class="breakdown-value">{contextCapacity().entities.toLocaleString()} tokens</span>
+            </div>
+            <div class="breakdown-item">
+              <span class="breakdown-label">Memories</span>
+              <span class="breakdown-value">{contextCapacity().memories.toLocaleString()} tokens</span>
+            </div>
+            <div class="breakdown-item">
+              <span class="breakdown-label">Signals</span>
+              <span class="breakdown-value">{contextCapacity().signals.toLocaleString()} tokens</span>
+            </div>
+          </div>
+
           <h3>Current Entity Store</h3>
           <p class="context-info">Entities loaded in memory: {$entities.length}</p>
           <pre class="json-view">{formatJson($entities.slice(0, 10))}</pre>
 
           <h3>Reference Sources</h3>
-          <div class="ref-sources">
-            {#each $referencePlugins as plugin}
-              {@const state = $referenceStates.get(plugin.id)}
-              <div class="ref-item">
-                <span class="ref-icon">{plugin.icon}</span>
-                <span class="ref-name">{plugin.name}</span>
-                <span class="ref-status" class:connected={state?.connected}>
-                  {state?.connected ? 'Connected' : 'Disconnected'}
-                </span>
-              </div>
-            {/each}
-          </div>
+          {#if connectedRefPlugins.length > 0}
+            <div class="ref-sources">
+              {#each connectedRefPlugins as plugin}
+                <div class="ref-item">
+                  <span class="ref-icon">{plugin.icon}</span>
+                  <span class="ref-name">{plugin.name}</span>
+                  <span class="ref-status connected">Connected</span>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="empty-state">No reference sources connected yet.</p>
+          {/if}
         </div>
       {:else if activeTab === 'integrations'}
         <div class="integrations-section">
-          <h3>Signal Plugins</h3>
-          {#each $allPlugins as plugin}
-            {@const state = $pluginStates.get(plugin.id)}
-            <div class="plugin-row">
-              <span class="plugin-icon">{plugin.icon}</span>
-              <div class="plugin-info">
-                <span class="plugin-name">{plugin.name}</span>
-                <span class="plugin-id">({plugin.id})</span>
+          <h3>Connected Integrations</h3>
+          {#if connectedSignalPlugins.length > 0}
+            {#each connectedSignalPlugins as plugin}
+              {@const state = $pluginStates.get(plugin.id)}
+              <div class="plugin-row">
+                <span class="plugin-icon">{plugin.icon}</span>
+                <div class="plugin-info">
+                  <span class="plugin-name">{plugin.name}</span>
+                </div>
+                <div class="plugin-state">
+                  <span class="state-badge" class:connected={state?.connected}>
+                    {state?.connected ? 'Connected' : 'Paused'}
+                  </span>
+                </div>
+                <div class="plugin-sync">
+                  {#if state?.lastSync}
+                    <span class="sync-time">Last sync: {formatDate(state.lastSync)}</span>
+                  {/if}
+                  {#if state?.lastError}
+                    <span class="sync-error">{state.lastError}</span>
+                  {/if}
+                </div>
               </div>
-              <div class="plugin-state">
-                <span class="state-badge" class:enabled={state?.enabled}>
-                  {state?.enabled ? 'Enabled' : 'Disabled'}
-                </span>
-                <span class="state-badge" class:connected={state?.connected}>
-                  {state?.connected ? 'Connected' : 'Disconnected'}
-                </span>
-              </div>
-              <div class="plugin-sync">
-                {#if state?.lastSync}
-                  <span class="sync-time">Last sync: {formatDate(state.lastSync)}</span>
-                {:else}
-                  <span class="sync-time muted">Never synced</span>
-                {/if}
-                {#if state?.lastError}
-                  <span class="sync-error">{state.lastError}</span>
-                {/if}
-              </div>
-            </div>
-          {/each}
-
-          <h3>Reference Plugins</h3>
-          {#each $referencePlugins as plugin}
-            {@const state = $referenceStates.get(plugin.id)}
-            <div class="plugin-row">
-              <span class="plugin-icon">{plugin.icon}</span>
-              <div class="plugin-info">
-                <span class="plugin-name">{plugin.name}</span>
-                <span class="plugin-id">({plugin.id})</span>
-              </div>
-              <div class="plugin-state">
-                <span class="state-badge" class:connected={state?.connected}>
-                  {state?.connected ? 'Connected' : 'Disconnected'}
-                </span>
-              </div>
-            </div>
-          {/each}
+            {/each}
+          {:else}
+            <p class="empty-state">No integrations connected yet.</p>
+          {/if}
         </div>
       {:else if activeTab === 'signals'}
         <div class="signals-section">
@@ -1139,5 +1197,86 @@
 
   .entity-groups.compact .entity-row {
     padding: 3px var(--space-md);
+  }
+
+  /* Context capacity meter */
+  .capacity-meter {
+    margin-bottom: var(--space-lg);
+  }
+
+  .capacity-bar {
+    height: 12px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    margin-bottom: var(--space-sm);
+  }
+
+  .capacity-fill {
+    height: 100%;
+    border-radius: var(--radius-md);
+    transition: width 0.3s ease;
+  }
+
+  .capacity-fill.low {
+    background: linear-gradient(90deg, #4ade80, #22c55e);
+  }
+
+  .capacity-fill.medium {
+    background: linear-gradient(90deg, #facc15, #f59e0b);
+  }
+
+  .capacity-fill.high {
+    background: linear-gradient(90deg, #f87171, #ef4444);
+  }
+
+  .capacity-label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: 12px;
+  }
+
+  .capacity-used {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .capacity-sep {
+    color: var(--text-muted);
+  }
+
+  .capacity-max {
+    color: var(--text-secondary);
+  }
+
+  .capacity-pct {
+    color: var(--text-muted);
+    margin-left: auto;
+  }
+
+  .capacity-breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-md);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-lg);
+  }
+
+  .breakdown-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+  }
+
+  .breakdown-label {
+    color: var(--text-secondary);
+  }
+
+  .breakdown-value {
+    color: var(--text-primary);
+    font-family: 'SF Mono', Consolas, monospace;
   }
 </style>
