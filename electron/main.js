@@ -14,12 +14,51 @@ const __dirname = path.dirname(__filename);
 
 // Canopy directory
 const CANOPY_DIR = path.join(os.homedir(), '.canopy');
-const UPLOADS_DIR = path.join(CANOPY_DIR, 'uploads');
+const CONFIG_FILE = path.join(CANOPY_DIR, 'config.json');
 const SECRETS_FILE = path.join(CANOPY_DIR, 'secrets.json');
+
+// Profile management
+const PROFILES = {
+  live: { db: 'canopy.db', uploads: 'uploads', label: 'Live' },
+  test: { db: 'canopy-test.db', uploads: 'uploads-test', label: 'Test' }
+};
+
+function getConfig() {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+    }
+  } catch (e) {
+    console.warn('Failed to read config:', e);
+  }
+  return { profile: 'live' };
+}
+
+function saveConfig(config) {
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+}
+
+function getCurrentProfile() {
+  const config = getConfig();
+  return config.profile || 'live';
+}
+
+function getProfilePaths(profileId) {
+  const profile = PROFILES[profileId] || PROFILES.live;
+  return {
+    db: path.join(CANOPY_DIR, profile.db),
+    uploads: path.join(CANOPY_DIR, profile.uploads)
+  };
+}
+
+// Current profile paths
+let currentProfile = getCurrentProfile();
+let UPLOADS_DIR = getProfilePaths(currentProfile).uploads;
 
 // Ensure directories exist
 function ensureDirectories() {
-  [CANOPY_DIR, UPLOADS_DIR].forEach(dir => {
+  const paths = getProfilePaths(currentProfile);
+  [CANOPY_DIR, paths.uploads].forEach(dir => {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -27,14 +66,15 @@ function ensureDirectories() {
 }
 
 // Database setup - unified in ~/.canopy/
-const dbPath = path.join(CANOPY_DIR, 'canopy.db');
 let db;
 
 function initDatabase() {
   // Ensure directories exist before opening database
   ensureDirectories();
 
+  const dbPath = getProfilePaths(currentProfile).db;
   db = new Database(dbPath);
+  console.log(`Database opened: ${dbPath} (profile: ${currentProfile})`);
 
   // Enable foreign keys
   db.pragma('foreign_keys = ON');
@@ -183,7 +223,6 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_uploads_status ON uploads(status);
   `);
 
-  console.log('Database initialized at:', dbPath);
   console.log('Canopy directory:', CANOPY_DIR);
 }
 
@@ -234,6 +273,14 @@ function createMenu() {
       label: app.name,
       submenu: [
         { role: 'about' },
+        { type: 'separator' },
+        {
+          label: 'Settings...',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => {
+            mainWindow?.webContents.send('navigate', '/settings');
+          }
+        },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -1019,6 +1066,100 @@ ipcMain.handle('oauth:refresh', async (event, { pluginId, config }) => {
   }
 });
 
+// ============ Database Reset ============
+
+ipcMain.handle('db:reset', async () => {
+  try {
+    // Delete all data from tables (but keep the schema)
+    db.exec(`
+      DELETE FROM entities;
+      DELETE FROM relationships;
+      DELETE FROM captures;
+      DELETE FROM threads;
+      DELETE FROM messages;
+      DELETE FROM memories;
+      DELETE FROM signals;
+      DELETE FROM uploads;
+      DELETE FROM artifacts;
+      DELETE FROM plugin_state;
+    `);
+
+    // Clean up uploads directory
+    if (fs.existsSync(UPLOADS_DIR)) {
+      const files = fs.readdirSync(UPLOADS_DIR);
+      for (const file of files) {
+        fs.unlinkSync(path.join(UPLOADS_DIR, file));
+      }
+    }
+
+    // Clear user profile from secrets (but keep API key)
+    if (fs.existsSync(SECRETS_FILE)) {
+      try {
+        const secrets = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf-8'));
+        // Remove user profile settings
+        delete secrets.user_name;
+        delete secrets.user_nickname;
+        delete secrets.user_dob;
+        delete secrets.user_location;
+        delete secrets.user_email;
+        fs.writeFileSync(SECRETS_FILE, JSON.stringify(secrets, null, 2), { mode: 0o600 });
+      } catch (e) {
+        console.warn('Failed to clear user profile from secrets:', e);
+      }
+    }
+
+    console.log('Database reset complete');
+    return { success: true };
+  } catch (error) {
+    console.error('Database reset failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// ============ Profile Management ============
+
+ipcMain.handle('profile:get', () => {
+  return {
+    current: currentProfile,
+    profiles: Object.entries(PROFILES).map(([id, p]) => ({ id, label: p.label }))
+  };
+});
+
+ipcMain.handle('profile:switch', async (event, { profileId }) => {
+  if (!PROFILES[profileId]) {
+    return { success: false, error: 'Invalid profile' };
+  }
+
+  try {
+    // Close current database
+    if (db) {
+      db.close();
+    }
+
+    // Update current profile
+    currentProfile = profileId;
+    UPLOADS_DIR = getProfilePaths(currentProfile).uploads;
+
+    // Save to config
+    saveConfig({ profile: profileId });
+
+    // Reinitialize database with new profile
+    initDatabase();
+
+    console.log(`Switched to profile: ${profileId}`);
+
+    // Reload the window to refresh all data
+    if (mainWindow) {
+      mainWindow.reload();
+    }
+
+    return { success: true, profile: profileId };
+  } catch (error) {
+    console.error('Profile switch failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 // ============ Claude API ============
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
@@ -1299,5 +1440,40 @@ ipcMain.handle('weather:get', async (event, { location }) => {
   } catch (error) {
     console.error('Weather fetch error:', error);
     return { error: error.message };
+  }
+});
+
+// ============================================================================
+// URL FETCHING (for persona/web content)
+// ============================================================================
+
+ipcMain.handle('fetch:url', async (event, { url }) => {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Canopy/1.0 (Personal Coach App)',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      timeout: 10000,
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('text/html') && !contentType.includes('text/plain') && !contentType.includes('application/json')) {
+      // Skip binary content
+      return null;
+    }
+
+    const text = await response.text();
+
+    // Limit response size to avoid overwhelming the AI
+    const maxLength = 50000;
+    return text.length > maxLength ? text.slice(0, maxLength) : text;
+  } catch (error) {
+    console.error('URL fetch error:', error.message);
+    return null;
   }
 });
