@@ -50,6 +50,7 @@
   // Profile state (for StructuredInput)
   let profileValues = $state<Record<string, string>>({});
   let guessedLocation = $state('');
+  let showFullProfileForm = $state(false);
 
   // Profile field configuration
   const profileFields: FieldConfig[] = [
@@ -817,6 +818,7 @@
     showFileUpload = false;
     showPlatformInput = false;
     showIntegrationPicker = false;
+    showFullProfileForm = false;
     selectedIntegrations = [];
     integrationFilter = null;
     offeredIntegrations = [];
@@ -1283,17 +1285,33 @@
           </button>
         </div>
       {:else if currentPhase === 'profile'}
-        <StructuredInput
-          fields={profileFields.map(f =>
-            f.id === 'location' && guessedLocation && profileValues.location === guessedLocation
-              ? { ...f, hint: 'Based on your timezone' }
-              : f
-          )}
-          bind:values={profileValues}
-          submitLabel="Continue"
-          disabled={isProcessing}
-          onsubmit={saveProfile}
-        />
+        <!-- If name is already filled, show a simple confirmation first -->
+        {#if profileValues.name?.trim() && !showFullProfileForm}
+          <div class="profile-confirm">
+            <p class="confirm-greeting">Hi <strong>{profileValues.name}</strong>!</p>
+            <p class="confirm-question">Is this your name?</p>
+            <div class="confirm-actions">
+              <button class="primary-btn" onclick={() => saveProfile()}>
+                Yes, continue
+              </button>
+              <button class="secondary-btn" onclick={() => showFullProfileForm = true}>
+                Edit details
+              </button>
+            </div>
+          </div>
+        {:else}
+          <StructuredInput
+            fields={profileFields.map(f =>
+              f.id === 'location' && guessedLocation && profileValues.location === guessedLocation
+                ? { ...f, hint: 'Based on your timezone' }
+                : f
+            )}
+            bind:values={profileValues}
+            submitLabel="Continue"
+            disabled={isProcessing}
+            onsubmit={saveProfile}
+          />
+        {/if}
       {:else if showIntegrationPicker}
         <div class="integration-picker">
           <div class="integration-cards">
@@ -2159,5 +2177,40 @@
   .focus-entity .entity-actions {
     align-self: flex-end;
     margin-top: var(--space-xs);
+  }
+
+  /* Profile confirmation UI */
+  .profile-confirm {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-md);
+    text-align: center;
+    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    opacity: 0;
+  }
+
+  .confirm-greeting {
+    font-size: 20px;
+    color: var(--text-primary);
+    margin: 0;
+  }
+
+  .confirm-greeting strong {
+    color: var(--accent);
+  }
+
+  .confirm-question {
+    font-size: 15px;
+    color: var(--text-secondary);
+    margin: 0;
+  }
+
+  .confirm-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    align-items: center;
+    margin-top: var(--space-sm);
   }
 </style>

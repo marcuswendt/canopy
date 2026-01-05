@@ -1109,21 +1109,36 @@ Already connected: ${context.connectedIntegrations.join(', ') || 'none'}`
       ? `\nTopics NOT covered (good to ask about): ${ext.topicsNotCovered.join(', ')}`
       : '';
 
+    // Check if document is comprehensive (multiple domains + many entities)
+    const isComprehensive = ext.domains.length >= 3 && ext.entities.length >= 10;
+    const hasMinimalGaps = !ext.topicsNotCovered || ext.topicsNotCovered.length <= 1;
+
     documentContext = `\n\n📄 DOCUMENT PROVIDED - Pre-extracted summary:
 "${ext.summary}"
 
 Life domains covered: ${domainList}
+Entity count: ${ext.entities.length} entities extracted
 
-Entities extracted from document:
+Sample entities from document:
   - ${entityList}
 ${gapsToExplore}
 
-⚠️ IMPORTANT: The user shared a comprehensive onboarding document.
-- Do NOT re-extract these entities (they're already captured above)
-- Do NOT ask about topics already covered in the document
-- Your response should acknowledge this rich context
-- Ask about gaps or topics NOT covered in the document
-- If the document was comprehensive, consider marking isComplete=true`;
+🚨 CRITICAL INSTRUCTIONS FOR DOCUMENT-BASED ONBOARDING:
+${isComprehensive && hasMinimalGaps ? `
+✅ THIS IS A COMPREHENSIVE DOCUMENT - SET isComplete=true
+The user provided detailed information about ${ext.domains.length} life domains with ${ext.entities.length} entities.
+Your response should:
+1. Acknowledge the depth of what they shared (be specific about domains/entities)
+2. Summarize what you now understand about their life
+3. SET isComplete=true - we have enough context to proceed
+4. Do NOT ask for more information - they've given us plenty
+` : `
+This document covers several areas but may have gaps.
+- Do NOT re-extract entities already captured above
+- Do NOT ask about topics already covered
+- Ask about specific gaps: ${ext.topicsNotCovered?.join(', ') || 'none identified'}
+- If gaps are minor, consider marking isComplete=true
+`}`;
   }
 
   const prompt = `You are Ray, a personal coach AI conducting an onboarding conversation.
@@ -1218,11 +1233,36 @@ User's last message: "${context.messages[context.messages.length - 1]?.content |
     // Log the actual error for debugging
     console.error('Onboarding extraction failed:', result.error, 'code:', result.code);
 
-    // Return a more informative fallback based on error type
-    const hasDocuments = context.documents && context.documents.length > 0;
+    // Check if we have comprehensive document data - if so, complete onboarding
+    if (context.documentExtraction) {
+      const ext = context.documentExtraction;
+      const isComprehensive = ext.domains.length >= 3 && ext.entities.length >= 10;
+
+      if (isComprehensive) {
+        // We have enough from the document - complete onboarding
+        const domainNames = ext.domains.map(d => d.type).join(', ');
+        return {
+          response: `That's a wealth of context—${ext.domains.length} life domains and ${ext.entities.length} people, projects, and events I can now factor in. I've got a solid picture of your world: ${domainNames}. Let's put this to work.`,
+          isComplete: true,
+        };
+      }
+    }
+
+    // Check collected context - maybe we already have enough
+    const hasEnoughContext = context.collected.domains.length >= 2 &&
+                             context.collected.entities.length >= 5;
+
+    if (hasEnoughContext) {
+      return {
+        response: "I've captured quite a bit about your world. Ready to dive in whenever you are.",
+        isComplete: true,
+      };
+    }
+
+    // Fallback for when we truly need more info
     return {
-      response: hasDocuments
-        ? "I received your document. Let me review it. Could you tell me a bit more about yourself while I process this?"
+      response: context.collected.domains.length > 0
+        ? `I've got ${context.collected.domains.join(' and ')} so far. What else takes up mental space for you?`
         : "Tell me more about what keeps you busy day-to-day.",
       isComplete: false,
     };
