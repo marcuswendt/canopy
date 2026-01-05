@@ -24,9 +24,8 @@ function ensureDirectories() {
   });
 }
 
-// Database setup
-const userDataPath = app.getPath('userData');
-const dbPath = path.join(userDataPath, 'canopy.db');
+// Database setup - unified in ~/.canopy/
+const dbPath = path.join(CANOPY_DIR, 'canopy.db');
 let db;
 
 function initDatabase() {
@@ -80,6 +79,8 @@ function initDatabase() {
       domains JSON,
       entity_ids JSON,
       message_count INTEGER DEFAULT 0,
+      summary TEXT,
+      summary_up_to INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -151,7 +152,22 @@ function initDatabase() {
       processed_at DATETIME
     );
 
+    -- Artifacts (plans, notes, documents)
+    CREATE TABLE IF NOT EXISTS artifacts (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      type TEXT NOT NULL,
+      content TEXT NOT NULL,
+      entities JSON,
+      domains JSON,
+      pinned BOOLEAN DEFAULT FALSE,
+      metadata JSON,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_entities_domain ON entities(domain);
+    CREATE INDEX IF NOT EXISTS idx_artifacts_updated ON artifacts(updated_at);
     CREATE INDEX IF NOT EXISTS idx_entities_last_mentioned ON entities(last_mentioned);
     CREATE INDEX IF NOT EXISTS idx_captures_created ON captures(created_at);
     CREATE INDEX IF NOT EXISTS idx_threads_updated ON threads(updated_at);
@@ -313,16 +329,33 @@ ipcMain.handle('db:getRecentThreads', (event, { limit }) => {
   return stmt.all(limit || 10);
 });
 
-ipcMain.handle('db:updateThread', (event, { threadId, domains, entityIds }) => {
-  const stmt = db.prepare(`
-    UPDATE threads SET 
-      domains = ?,
-      entity_ids = ?,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `);
-  stmt.run(JSON.stringify(domains), JSON.stringify(entityIds), threadId);
-  return { success: true };
+ipcMain.handle('db:updateThread', (event, { threadId, domains, entityIds, summary, summaryUpTo }) => {
+  const updates = ['updated_at = CURRENT_TIMESTAMP'];
+  const params = [];
+
+  if (domains !== undefined) {
+    updates.push('domains = ?');
+    params.push(JSON.stringify(domains));
+  }
+  if (entityIds !== undefined) {
+    updates.push('entity_ids = ?');
+    params.push(JSON.stringify(entityIds));
+  }
+  if (summary !== undefined) {
+    updates.push('summary = ?');
+    params.push(summary);
+  }
+  if (summaryUpTo !== undefined) {
+    updates.push('summary_up_to = ?');
+    params.push(summaryUpTo);
+  }
+
+  params.push(threadId);
+  const stmt = db.prepare(`UPDATE threads SET ${updates.join(', ')} WHERE id = ?`);
+  stmt.run(...params);
+
+  const getStmt = db.prepare('SELECT * FROM threads WHERE id = ?');
+  return getStmt.get(threadId);
 });
 
 // Messages
@@ -548,14 +581,114 @@ ipcMain.handle('db:getUploads', (event, { status, entityId, threadId, limit }) =
 
 ipcMain.handle('db:deleteUpload', (event, { id }) => {
   const upload = db.prepare('SELECT local_path FROM uploads WHERE id = ?').get(id);
-  
+
   if (upload && upload.local_path && fs.existsSync(upload.local_path)) {
     fs.unlinkSync(upload.local_path);
   }
-  
+
   const stmt = db.prepare('DELETE FROM uploads WHERE id = ?');
   stmt.run(id);
   return { success: true };
+});
+
+// ============ Artifacts ============
+
+ipcMain.handle('db:getArtifacts', () => {
+  const stmt = db.prepare(`
+    SELECT * FROM artifacts ORDER BY pinned DESC, updated_at DESC
+  `);
+  return stmt.all();
+});
+
+ipcMain.handle('db:createArtifact', (event, { id, title, type, content, entities, domains, pinned, metadata }) => {
+  const artifactId = id || randomUUID();
+  const stmt = db.prepare(`
+    INSERT INTO artifacts (id, title, type, content, entities, domains, pinned, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run(
+    artifactId,
+    title,
+    type,
+    content,
+    JSON.stringify(entities || []),
+    JSON.stringify(domains || []),
+    pinned ? 1 : 0,
+    JSON.stringify(metadata || {})
+  );
+
+  const getStmt = db.prepare('SELECT * FROM artifacts WHERE id = ?');
+  return getStmt.get(artifactId);
+});
+
+ipcMain.handle('db:updateArtifact', (event, { id, title, content, pinned, entities, domains, metadata }) => {
+  // Build dynamic update query
+  const updates = [];
+  const params = [];
+
+  if (title !== undefined) {
+    updates.push('title = ?');
+    params.push(title);
+  }
+  if (content !== undefined) {
+    updates.push('content = ?');
+    params.push(content);
+  }
+  if (pinned !== undefined) {
+    updates.push('pinned = ?');
+    params.push(pinned ? 1 : 0);
+  }
+  if (entities !== undefined) {
+    updates.push('entities = ?');
+    params.push(JSON.stringify(entities));
+  }
+  if (domains !== undefined) {
+    updates.push('domains = ?');
+    params.push(JSON.stringify(domains));
+  }
+  if (metadata !== undefined) {
+    updates.push('metadata = ?');
+    params.push(JSON.stringify(metadata));
+  }
+
+  if (updates.length === 0) {
+    return { success: false, error: 'No updates provided' };
+  }
+
+  updates.push('updated_at = CURRENT_TIMESTAMP');
+  params.push(id);
+
+  const stmt = db.prepare(`UPDATE artifacts SET ${updates.join(', ')} WHERE id = ?`);
+  stmt.run(...params);
+
+  const getStmt = db.prepare('SELECT * FROM artifacts WHERE id = ?');
+  return getStmt.get(id);
+});
+
+ipcMain.handle('db:deleteArtifact', (event, { id }) => {
+  const stmt = db.prepare('DELETE FROM artifacts WHERE id = ?');
+  stmt.run(id);
+  return { success: true };
+});
+
+ipcMain.handle('db:getArtifactsForEntities', (event, { entityIds }) => {
+  // Get artifacts that have any of the specified entities
+  const stmt = db.prepare(`
+    SELECT * FROM artifacts
+    WHERE entities IS NOT NULL
+    ORDER BY pinned DESC, updated_at DESC
+  `);
+  const artifacts = stmt.all();
+
+  // Filter in JS since SQLite JSON handling varies
+  return artifacts.filter(artifact => {
+    try {
+      const artEntities = JSON.parse(artifact.entities || '[]');
+      return entityIds.some(id => artEntities.includes(id));
+    } catch {
+      return false;
+    }
+  });
 });
 
 // ============ File Operations ============
@@ -609,4 +742,197 @@ ipcMain.handle('secrets:delete', (event, { key }) => {
   } catch (error) {
     return { success: false, error: error.message };
   }
+});
+
+// ============ Claude API ============
+
+const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
+const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
+
+function getClaudeApiKey() {
+  try {
+    if (fs.existsSync(SECRETS_FILE)) {
+      const secrets = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf-8'));
+      return secrets['claude_api_key'] || null;
+    }
+  } catch (error) {
+    console.error('Failed to read Claude API key:', error);
+  }
+  return null;
+}
+
+// Non-streaming completion
+ipcMain.handle('claude:complete', async (event, { messages, system, maxTokens, temperature }) => {
+  const apiKey = getClaudeApiKey();
+  if (!apiKey) {
+    return { error: 'API key not configured', code: 'NO_API_KEY' };
+  }
+
+  try {
+    const response = await fetch(CLAUDE_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: maxTokens || 1024,
+        temperature: temperature ?? 0.7,
+        system,
+        messages,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      return { error: error.error?.message || 'API request failed', code: response.status };
+    }
+
+    const data = await response.json();
+    return {
+      content: data.content[0].text,
+      usage: data.usage,
+      stopReason: data.stop_reason,
+    };
+  } catch (error) {
+    return { error: error.message, code: 'NETWORK_ERROR' };
+  }
+});
+
+// Streaming completion
+ipcMain.handle('claude:stream', async (event, { messages, system, maxTokens, temperature, streamId }) => {
+  const apiKey = getClaudeApiKey();
+  if (!apiKey) {
+    mainWindow.webContents.send('claude:stream:error', { streamId, error: 'API key not configured' });
+    return { error: 'API key not configured' };
+  }
+
+  try {
+    const response = await fetch(CLAUDE_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: maxTokens || 1024,
+        temperature: temperature ?? 0.7,
+        system,
+        messages,
+        stream: true,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      mainWindow.webContents.send('claude:stream:error', { streamId, error: error.error?.message });
+      return { error: error.error?.message };
+    }
+
+    // Process SSE stream
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.type === 'content_block_delta') {
+              mainWindow.webContents.send('claude:stream:delta', {
+                streamId,
+                delta: parsed.delta.text
+              });
+            } else if (parsed.type === 'message_stop') {
+              mainWindow.webContents.send('claude:stream:end', { streamId });
+            }
+          } catch {}
+        }
+      }
+    }
+
+    mainWindow.webContents.send('claude:stream:end', { streamId });
+    return { success: true };
+  } catch (error) {
+    mainWindow.webContents.send('claude:stream:error', { streamId, error: error.message });
+    return { error: error.message };
+  }
+});
+
+// JSON extraction with schema
+ipcMain.handle('claude:extract', async (event, { prompt, schema, input, temperature }) => {
+  const apiKey = getClaudeApiKey();
+  if (!apiKey) {
+    return { error: 'API key not configured', code: 'NO_API_KEY' };
+  }
+
+  const systemPrompt = `You are an expert information extractor. Extract structured data from the user's input.
+Always respond with valid JSON matching this schema:
+${JSON.stringify(schema, null, 2)}
+
+Important:
+- Only include information explicitly stated or strongly implied
+- Use null for missing optional fields
+- Be conservative with confidence scores
+- Do not invent or hallucinate information`;
+
+  try {
+    const response = await fetch(CLAUDE_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 2048,
+        temperature: temperature ?? 0.3,
+        system: systemPrompt,
+        messages: [
+          { role: 'user', content: `${prompt}\n\nInput to extract from:\n${input}` }
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      return { error: error.error?.message, code: response.status };
+    }
+
+    const data = await response.json();
+    const text = data.content[0].text;
+
+    // Parse JSON from response (handle markdown code blocks)
+    let jsonStr = text;
+    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[1];
+    }
+
+    const extracted = JSON.parse(jsonStr);
+    return { data: extracted, usage: data.usage };
+  } catch (error) {
+    return { error: error.message, code: 'PARSE_ERROR' };
+  }
+});
+
+// Check if API key exists
+ipcMain.handle('claude:hasApiKey', () => {
+  return !!getClaudeApiKey();
 });

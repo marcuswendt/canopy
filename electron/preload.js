@@ -51,7 +51,14 @@ contextBridge.exposeInMainWorld('canopy', {
   setUploadExtracted: (id, extracted) => ipcRenderer.invoke('db:setUploadExtracted', { id, extracted }),
   getUploads: (opts) => ipcRenderer.invoke('db:getUploads', opts || {}),
   deleteUpload: (id) => ipcRenderer.invoke('db:deleteUpload', { id }),
-  
+
+  // ============ Artifacts ============
+  getArtifacts: () => ipcRenderer.invoke('db:getArtifacts'),
+  createArtifact: (data) => ipcRenderer.invoke('db:createArtifact', data),
+  updateArtifact: (data) => ipcRenderer.invoke('db:updateArtifact', data),
+  deleteArtifact: (id) => ipcRenderer.invoke('db:deleteArtifact', { id }),
+  getArtifactsForEntities: (entityIds) => ipcRenderer.invoke('db:getArtifactsForEntities', { entityIds }),
+
   // ============ File Operations ============
   saveUpload: (id, filename, data) => ipcRenderer.invoke('fs:saveUpload', { id, filename, data }),
   getUploadPath: () => ipcRenderer.invoke('fs:getUploadPath'),
@@ -71,5 +78,38 @@ contextBridge.exposeInMainWorld('canopy', {
   },
   onSyncFailed: (callback) => {
     ipcRenderer.on('sync:failed', (event, data) => callback(data));
+  },
+
+  // ============ Claude API ============
+  claude: {
+    // Non-streaming completion
+    complete: (opts) => ipcRenderer.invoke('claude:complete', opts),
+
+    // Start streaming completion
+    stream: (opts) => ipcRenderer.invoke('claude:stream', opts),
+
+    // Structured extraction
+    extract: (opts) => ipcRenderer.invoke('claude:extract', opts),
+
+    // Check if API key is configured
+    hasApiKey: () => ipcRenderer.invoke('claude:hasApiKey'),
+
+    // Stream event listeners
+    onStreamDelta: (callback) => {
+      ipcRenderer.on('claude:stream:delta', (event, data) => callback(data));
+    },
+    onStreamEnd: (callback) => {
+      ipcRenderer.on('claude:stream:end', (event, data) => callback(data));
+    },
+    onStreamError: (callback) => {
+      ipcRenderer.on('claude:stream:error', (event, data) => callback(data));
+    },
+
+    // Remove listeners (for cleanup)
+    removeStreamListeners: () => {
+      ipcRenderer.removeAllListeners('claude:stream:delta');
+      ipcRenderer.removeAllListeners('claude:stream:end');
+      ipcRenderer.removeAllListeners('claude:stream:error');
+    },
   },
 });
