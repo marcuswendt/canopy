@@ -37,9 +37,18 @@
     }
     window.addEventListener('keydown', handleKeydown);
 
+    // Listen for menu bar toggle (from Electron main process)
+    let removeMenuListener: (() => void) | undefined;
+    if (typeof window !== 'undefined' && window.canopy?.onToggleInspector) {
+      removeMenuListener = window.canopy.onToggleInspector(() => {
+        inspectorOpen.toggle();
+      });
+    }
+
     return () => {
       cleanup?.();
       window.removeEventListener('keydown', handleKeydown);
+      removeMenuListener?.();
     };
   });
 

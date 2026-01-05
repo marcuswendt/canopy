@@ -122,4 +122,10 @@ contextBridge.exposeInMainWorld('canopy', {
     exchange: (pluginId, code, config) => ipcRenderer.invoke('oauth:exchange', { pluginId, code, config }),
     refresh: (pluginId, config) => ipcRenderer.invoke('oauth:refresh', { pluginId, config }),
   },
+
+  // ============ App Events ============
+  onToggleInspector: (callback) => {
+    ipcRenderer.on('toggle-inspector', callback);
+    return () => ipcRenderer.removeListener('toggle-inspector', callback);
+  },
 });

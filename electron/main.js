@@ -1,7 +1,7 @@
 // Canopy - Electron Main Process
 // Copyright © 2025 Marcus Wendt / FIELD.IO (https://field.io)
 // Proprietary and Confidential - All Rights Reserved
-import { app, BrowserWindow, ipcMain, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeImage, Menu } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -224,10 +224,88 @@ function createWindow() {
   }
 }
 
+// Build application menu
+function createMenu() {
+  const isMac = process.platform === 'darwin';
+
+  const template = [
+    // App menu (macOS only)
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    }] : []),
+    // Edit menu
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    // View menu
+    {
+      label: 'View',
+      submenu: [
+        {
+          label: 'Data Inspector',
+          accelerator: 'CmdOrCtrl+Shift+D',
+          click: () => {
+            mainWindow?.webContents.send('toggle-inspector');
+          }
+        },
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    // Window menu
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        ...(isMac ? [
+          { type: 'separator' },
+          { role: 'front' }
+        ] : [
+          { role: 'close' }
+        ])
+      ]
+    }
+  ];
+
+  return Menu.buildFromTemplate(template);
+}
+
 // App lifecycle
 app.whenReady().then(() => {
   initDatabase();
   createWindow();
+
+  // Set up application menu
+  Menu.setApplicationMenu(createMenu());
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
