@@ -33,8 +33,9 @@ export interface RayState {
   lastActivity?: string;
 }
 
-export type OnboardingPhase = 
+export type OnboardingPhase =
   | 'welcome'
+  | 'profile'             // Name, location, optional details
   | 'domains'
   | 'domain-discovery'    // Deep dive into each domain
   | 'persona'             // Digital presence
@@ -84,8 +85,16 @@ export const RAY_VOICE = {
     welcome: `I'm Ray—your guide through what matters.
 
 I work best when I understand your life. Let's spend 5 minutes so I can actually be useful to you.`,
-    
-    askDomains: `Let's start simple. What are the main areas of your life that take your attention?
+
+    askProfile: (guessedLocation?: string) =>
+      guessedLocation
+        ? `First, what should I call you?${guessedLocation ? `\n\nLooks like you're in ${guessedLocation}—is that right?` : ''}`
+        : `First, what should I call you?\n\nAnd where in the world are you based?`,
+
+    confirmProfile: (name: string, location: string) =>
+      `Good to meet you, ${name}. ${location ? `I'll keep ${location} in mind for context.` : ''}\n\nNow let's map out what matters to you.`,
+
+    askDomains: `What are the main areas of your life that take your attention?
 
 Most people have 3-5: work, family, health, a side project...`,
     
