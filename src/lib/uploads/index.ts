@@ -14,23 +14,28 @@ export interface FileUpload {
   mimeType: string;
   size: number;
   localPath: string;          // Path in ~/.canopy/uploads/
-  
+
   // Source info
   source: 'drop' | 'paste' | 'select' | 'url';
   originalUrl?: string;       // If fetched from URL
-  
+
+  // The actual file data (for processing)
+  file?: File;                // The File object from drag/drop
+  dataUrl?: string;           // Base64 data URL for images
+  textContent?: string;       // Extracted text content
+
   // Processing state
   status: 'pending' | 'processing' | 'complete' | 'failed';
   error?: string;
-  
+
   // Extracted content
   extracted?: ExtractedContent;
-  
+
   // Associations
   entityId?: string;          // Attached to an entity
   threadId?: string;          // Part of a conversation
   domain?: string;
-  
+
   createdAt: Date;
   processedAt?: Date;
 }
@@ -228,42 +233,113 @@ export const allSuggestions = derived(
 // FILE PROCESSING
 // =============================================================================
 
+// Read file as text
+async function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+// Read file as data URL (for images)
+async function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+// Read file as array buffer (for binary files like PDFs)
+async function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 export async function processFile(upload: FileUpload): Promise<ExtractedContent> {
   uploads.updateStatus(upload.id, 'processing');
 
   try {
-    // For images, return basic info (vision would be a future enhancement)
+    const file = upload.file;
+    if (!file) {
+      throw new Error('No file data available');
+    }
+
+    // For images, read as data URL for display and potential vision processing
     if (isImage(upload.mimeType)) {
+      const dataUrl = await readFileAsDataUrl(file);
+
+      // Store the data URL for display
+      uploadsStore.update(uploads =>
+        uploads.map(u => u.id === upload.id ? { ...u, dataUrl } : u)
+      );
+
       const extracted: ExtractedContent = {
-        description: 'Image uploaded',
+        description: `Image: ${upload.filename}`,
+        // Future: use vision API to describe image content
       };
       uploads.setExtracted(upload.id, extracted);
       return extracted;
     }
 
-    // For text-based files, read content and extract with AI
-    // Note: In Electron, we'd read the file from localPath
-    // For now, we'll use the filename as a hint for processing
+    // For text-based files, read content
     const isTextFile = upload.mimeType.startsWith('text/') ||
       upload.mimeType === 'application/json' ||
-      upload.mimeType === 'application/pdf';
+      upload.mimeType === 'text/markdown';
 
-    if (isTextFile && typeof window !== 'undefined' && window.canopy) {
-      // In Electron, we could read the file content here
-      // For now, create a placeholder that would be enhanced with file reading
+    if (isTextFile) {
+      const textContent = await readFileAsText(file);
+
+      // Store the text content
+      uploadsStore.update(uploads =>
+        uploads.map(u => u.id === upload.id ? { ...u, textContent } : u)
+      );
+
+      // Use AI extraction on the content
+      const extracted = await extractFromDocument(textContent, {
+        filename: upload.filename,
+        mimeType: upload.mimeType,
+      });
+      uploads.setExtracted(upload.id, extracted);
+      return extracted;
+    }
+
+    // For PDFs, we'd need a PDF parsing library or Electron-side processing
+    if (upload.mimeType === 'application/pdf') {
+      // For now, mark as needing processing
+      // Future: use pdf.js or Electron-side PDF parsing
       const extracted: ExtractedContent = {
-        summary: `Processing ${upload.filename}...`,
+        summary: `PDF document: ${upload.filename}`,
+        text: `[PDF content extraction not yet implemented - file: ${upload.filename}]`,
         entities: [],
       };
       uploads.setExtracted(upload.id, extracted);
       return extracted;
     }
 
-    // Use AI extraction with filename as content hint
-    const extracted = await extractFromDocument(
-      `File: ${upload.filename}`,
-      { filename: upload.filename, mimeType: upload.mimeType }
-    );
+    // For Word docs, similar situation
+    if (upload.mimeType.includes('wordprocessingml') || upload.mimeType === 'application/msword') {
+      const extracted: ExtractedContent = {
+        summary: `Word document: ${upload.filename}`,
+        text: `[Word document extraction not yet implemented - file: ${upload.filename}]`,
+        entities: [],
+      };
+      uploads.setExtracted(upload.id, extracted);
+      return extracted;
+    }
+
+    // Fallback for other file types
+    const extracted: ExtractedContent = {
+      summary: `File uploaded: ${upload.filename}`,
+      entities: [],
+    };
     uploads.setExtracted(upload.id, extracted);
     return extracted;
 

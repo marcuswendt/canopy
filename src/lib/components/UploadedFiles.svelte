@@ -33,8 +33,12 @@
   <div class="uploaded-files">
     {#each [...$pendingUploads, ...$completedUploads] as upload (upload.id)}
       <div class="file-item" class:processing={upload.status === 'processing'} class:failed={upload.status === 'failed'}>
-        <span class="file-icon">{getIcon(upload)}</span>
-        
+        {#if isImage(upload.mimeType) && upload.dataUrl}
+          <img src={upload.dataUrl} alt={upload.filename} class="file-thumbnail" />
+        {:else}
+          <span class="file-icon">{getIcon(upload)}</span>
+        {/if}
+
         <div class="file-info">
           <span class="file-name">{upload.filename}</span>
           {#if upload.size > 0}
@@ -103,6 +107,14 @@
   
   .file-icon {
     font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .file-thumbnail {
+    width: 32px;
+    height: 32px;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
     flex-shrink: 0;
   }
   

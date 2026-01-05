@@ -258,7 +258,7 @@ Not work, not family—just for you.`,
     understood: "Understood.",
     helpful: "That helps.",
     moreContext: "Tell me more.",
-  }
+  },
 };
 
 // Default initial state

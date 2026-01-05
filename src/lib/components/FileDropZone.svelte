@@ -83,7 +83,7 @@
   async function addFiles(files: File[]) {
     const limited = files.slice(0, maxFiles);
     const added: FileUpload[] = [];
-    
+
     for (const file of limited) {
       const upload = uploads.add({
         filename: file.name,
@@ -91,13 +91,16 @@
         size: file.size,
         localPath: '', // Would be set after saving to ~/.canopy/uploads/
         source: 'drop',
+        file: file,    // Store the actual File object for processing
       });
       added.push(upload);
-      
-      // Start processing
-      processFile(upload).catch(console.error);
+
+      // Start processing (async, don't await)
+      processFile(upload).catch(err => {
+        console.error(`Failed to process ${file.name}:`, err);
+      });
     }
-    
+
     onfilesAdded?.(added);
   }
   
@@ -169,7 +172,7 @@
         Drop files here, paste, or <label for="file-upload" class="browse-link">browse</label>
       </p>
       <p class="secondary-text">
-        Documents, images, PDFs
+        Any file type supported
       </p>
       
       {#if allowUrls}

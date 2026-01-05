@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { registry, allPlugins, pluginStates, syncPlugin, connectPlugin, disconnectPlugin, enablePlugin, disablePlugin } from '$lib/integrations/registry';
   import { whoopPlugin } from '$lib/integrations/whoop';
   import { googlePlugin } from '$lib/integrations/google';
   import { hasApiKey } from '$lib/ai';
   import { userSettings } from '$lib/stores/settings';
+  import { rayState } from '$lib/coach/store';
 
   // Claude API key state
   let apiKeyInput = $state('');
@@ -29,6 +31,21 @@
   let savingWhoop = $state(false);
   let hasWhoopCreds = $state(false);
 
+  // Profile state
+  let currentProfile = $state('live');
+  let profiles = $state<{ id: string; label: string; builtIn: boolean }[]>([]);
+  let switchingProfile = $state(false);
+  let showCreateProfile = $state(false);
+  let newProfileLabel = $state('');
+  let creatingProfile = $state(false);
+  let deletingProfile = $state<string | null>(null);
+
+  // Danger Zone state
+  let showResetConfirm = $state(false);
+  let resetConfirmText = $state('');
+  let resetting = $state(false);
+  let resetMessage = $state('');
+
   // Register plugins on mount
   onMount(async () => {
     registry.register(whoopPlugin);
@@ -46,6 +63,13 @@
     if (window.canopy?.getSecret) {
       const whoopId = await window.canopy.getSecret('whoop_client_id');
       hasWhoopCreds = !!whoopId;
+    }
+
+    // Load profile info
+    if (window.canopy?.getProfile) {
+      const profileInfo = await window.canopy.getProfile();
+      currentProfile = profileInfo.current;
+      profiles = profileInfo.profiles;
     }
   });
 
@@ -212,6 +236,111 @@
   // Group plugins by domain
   let healthPlugins = $derived($allPlugins.filter(p => p.domains.includes('health') || p.domains.includes('sport')));
   let workPlugins = $derived($allPlugins.filter(p => p.domains.includes('work')));
+
+  // Danger Zone functions
+  async function resetDatabase() {
+    if (resetConfirmText !== 'DELETE EVERYTHING') return;
+
+    resetting = true;
+    resetMessage = '';
+
+    try {
+      if (window.canopy?.resetDatabase) {
+        await window.canopy.resetDatabase();
+        // Reset local ray state
+        rayState.reset();
+        // Clear localStorage
+        localStorage.clear();
+        resetMessage = 'Database reset complete. Restarting...';
+        // Redirect to onboarding after a short delay
+        setTimeout(() => {
+          goto('/onboarding');
+          // Force a full page reload to clear all state
+          window.location.reload();
+        }, 1500);
+      } else {
+        resetMessage = 'Database reset only available in Electron app';
+      }
+    } catch (error) {
+      resetMessage = 'Failed to reset database';
+      console.error('Reset error:', error);
+    } finally {
+      resetting = false;
+      showResetConfirm = false;
+      resetConfirmText = '';
+    }
+  }
+
+  function cancelReset() {
+    showResetConfirm = false;
+    resetConfirmText = '';
+    resetMessage = '';
+  }
+
+  async function switchToProfile(profileId: string) {
+    if (profileId === currentProfile || switchingProfile) return;
+
+    switchingProfile = true;
+    try {
+      if (window.canopy?.switchProfile) {
+        const result = await window.canopy.switchProfile(profileId);
+        if (result.success) {
+          // Window will reload automatically from main process
+          currentProfile = profileId;
+        }
+      }
+    } catch (error) {
+      console.error('Profile switch error:', error);
+    } finally {
+      switchingProfile = false;
+    }
+  }
+
+  async function createNewProfile() {
+    if (!newProfileLabel.trim() || creatingProfile) return;
+
+    creatingProfile = true;
+    try {
+      if (window.canopy?.createProfile) {
+        const result = await window.canopy.createProfile(newProfileLabel.trim());
+        if (result.success && result.profileId) {
+          // Refresh profiles list
+          const profileInfo = await window.canopy.getProfile();
+          profiles = profileInfo.profiles;
+          // Switch to the new profile
+          await switchToProfile(result.profileId);
+        }
+      }
+    } catch (error) {
+      console.error('Profile creation error:', error);
+    } finally {
+      creatingProfile = false;
+      showCreateProfile = false;
+      newProfileLabel = '';
+    }
+  }
+
+  async function deleteProfileById(profileId: string) {
+    if (deletingProfile) return;
+
+    deletingProfile = profileId;
+    try {
+      if (window.canopy?.deleteProfile) {
+        const result = await window.canopy.deleteProfile(profileId);
+        if (result.success) {
+          // Refresh profiles list
+          const profileInfo = await window.canopy.getProfile();
+          profiles = profileInfo.profiles;
+        } else if (result.error) {
+          console.error('Delete error:', result.error);
+        }
+      }
+    } catch (error) {
+      console.error('Profile deletion error:', error);
+    } finally {
+      deletingProfile = null;
+    }
+  }
 </script>
 
 <div class="settings-page">
@@ -529,6 +658,132 @@
 
         {#if whoopMessage}
           <p class="oauth-message" class:success={whoopMessage.includes('saved')}>{whoopMessage}</p>
+        {/if}
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Database Profile</h2>
+      <p class="section-desc">Switch between test and live databases</p>
+
+      <div class="profile-switcher">
+        {#each profiles as profile (profile.id)}
+          <div class="profile-row">
+            <button
+              class="profile-btn"
+              class:active={currentProfile === profile.id}
+              class:test={profile.id === 'test'}
+              class:custom={!profile.builtIn}
+              onclick={() => switchToProfile(profile.id)}
+              disabled={switchingProfile || !!deletingProfile}
+            >
+              <span class="profile-indicator"></span>
+              <span class="profile-label">{profile.label}</span>
+              {#if currentProfile === profile.id}
+                <span class="profile-active">Active</span>
+              {/if}
+            </button>
+            {#if !profile.builtIn && currentProfile !== profile.id}
+              <button
+                class="profile-delete-btn"
+                onclick={() => deleteProfileById(profile.id)}
+                disabled={!!deletingProfile}
+                title="Delete profile"
+              >
+                {deletingProfile === profile.id ? '...' : '×'}
+              </button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+
+      {#if showCreateProfile}
+        <div class="create-profile-form">
+          <input
+            type="text"
+            bind:value={newProfileLabel}
+            placeholder="Profile name (e.g. Experiment 1)"
+            class="create-profile-input"
+            disabled={creatingProfile}
+          />
+          <button
+            class="create-profile-submit"
+            onclick={createNewProfile}
+            disabled={!newProfileLabel.trim() || creatingProfile}
+          >
+            {creatingProfile ? 'Creating...' : 'Create'}
+          </button>
+          <button
+            class="create-profile-cancel"
+            onclick={() => { showCreateProfile = false; newProfileLabel = ''; }}
+            disabled={creatingProfile}
+          >
+            Cancel
+          </button>
+        </div>
+      {:else}
+        <button class="add-profile-btn" onclick={() => showCreateProfile = true}>
+          + New Test Profile
+        </button>
+      {/if}
+
+      <p class="profile-note">
+        Each profile has its own database and uploads folder. Secrets (API keys) are shared.
+      </p>
+    </section>
+
+    <section class="settings-section danger-zone">
+      <h2>Danger Zone</h2>
+      <p class="section-desc">Irreversible actions - be careful</p>
+
+      <div class="danger-card">
+        <div class="danger-header">
+          <div class="danger-info">
+            <span class="danger-label">Reset Database</span>
+            <p class="danger-desc">
+              Delete all data including entities, conversations, memories, and uploads.
+              Your API keys and OAuth credentials will be preserved.
+            </p>
+          </div>
+          {#if !showResetConfirm}
+            <button class="danger-btn" onclick={() => showResetConfirm = true}>
+              Reset Everything
+            </button>
+          {/if}
+        </div>
+
+        {#if showResetConfirm}
+          <div class="danger-confirm">
+            <p class="danger-warning">
+              This will permanently delete all your data. This action cannot be undone.
+            </p>
+            <label class="danger-confirm-label">
+              Type <strong>DELETE EVERYTHING</strong> to confirm:
+              <input
+                type="text"
+                bind:value={resetConfirmText}
+                placeholder="DELETE EVERYTHING"
+                class="danger-confirm-input"
+                disabled={resetting}
+              />
+            </label>
+            <div class="danger-actions">
+              <button
+                class="danger-confirm-btn"
+                onclick={resetDatabase}
+                disabled={resetConfirmText !== 'DELETE EVERYTHING' || resetting}
+              >
+                {resetting ? 'Resetting...' : 'I understand, delete everything'}
+              </button>
+              <button class="danger-cancel-btn" onclick={cancelReset} disabled={resetting}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        {/if}
+
+        {#if resetMessage}
+          <p class="danger-message" class:success={resetMessage.includes('complete')}>{resetMessage}</p>
         {/if}
       </div>
     </section>
@@ -1056,6 +1311,354 @@
   }
 
   .oauth-message.success {
+    color: var(--domain-family);
+  }
+
+  /* Profile Switcher */
+  .profile-switcher {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .profile-row {
+    display: flex;
+    gap: var(--space-xs);
+  }
+
+  .profile-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-md) var(--space-lg);
+    background: var(--bg-secondary);
+    border: 2px solid var(--border);
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .profile-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--bg-tertiary);
+  }
+
+  .profile-btn.active {
+    border-color: var(--accent);
+    background: var(--accent-muted, rgba(16, 185, 129, 0.1));
+  }
+
+  .profile-btn.test .profile-indicator {
+    background: var(--domain-work);
+  }
+
+  .profile-btn.custom .profile-indicator {
+    background: var(--domain-personal, #9b59b6);
+  }
+
+  .profile-btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
+
+  .profile-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: var(--radius-full);
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .profile-label {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .profile-active {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .profile-delete-btn {
+    width: 36px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-size: 18px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .profile-delete-btn:hover:not(:disabled) {
+    border-color: var(--domain-health);
+    color: var(--domain-health);
+    background: rgba(239, 68, 68, 0.1);
+  }
+
+  .profile-delete-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .add-profile-btn {
+    margin-top: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: transparent;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    width: 100%;
+  }
+
+  .add-profile-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-muted, rgba(16, 185, 129, 0.05));
+  }
+
+  .create-profile-form {
+    margin-top: var(--space-sm);
+    display: flex;
+    gap: var(--space-sm);
+    align-items: center;
+  }
+
+  .create-profile-input {
+    flex: 1;
+    padding: var(--space-sm) var(--space-md);
+    font-size: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+  }
+
+  .create-profile-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .create-profile-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .create-profile-submit {
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .create-profile-submit:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .create-profile-submit:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .create-profile-cancel {
+    padding: var(--space-sm) var(--space-md);
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .create-profile-cancel:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+  }
+
+  .create-profile-cancel:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .profile-note {
+    margin-top: var(--space-md);
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  /* Danger Zone */
+  .danger-zone h2 {
+    color: var(--domain-health);
+  }
+
+  .danger-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--domain-health);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+  }
+
+  .danger-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-lg);
+  }
+
+  .danger-info {
+    flex: 1;
+  }
+
+  .danger-label {
+    font-weight: 600;
+    color: var(--text-primary);
+    display: block;
+    margin-bottom: var(--space-xs);
+  }
+
+  .danger-desc {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  .danger-btn {
+    padding: var(--space-sm) var(--space-md);
+    background: transparent;
+    color: var(--domain-health);
+    border: 1px solid var(--domain-health);
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .danger-btn:hover {
+    background: var(--domain-health);
+    color: white;
+  }
+
+  .danger-confirm {
+    margin-top: var(--space-lg);
+    padding-top: var(--space-lg);
+    border-top: 1px solid var(--border);
+  }
+
+  .danger-warning {
+    color: var(--domain-health);
+    font-size: 14px;
+    font-weight: 500;
+    margin: 0 0 var(--space-md) 0;
+  }
+
+  .danger-confirm-label {
+    display: block;
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-md);
+  }
+
+  .danger-confirm-label strong {
+    color: var(--text-primary);
+    font-family: 'SF Mono', Consolas, monospace;
+  }
+
+  .danger-confirm-input {
+    display: block;
+    width: 100%;
+    margin-top: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    font-size: 14px;
+    font-family: 'SF Mono', Consolas, monospace;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+  }
+
+  .danger-confirm-input:focus {
+    outline: none;
+    border-color: var(--domain-health);
+  }
+
+  .danger-confirm-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .danger-actions {
+    display: flex;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+  }
+
+  .danger-confirm-btn {
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--domain-health);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .danger-confirm-btn:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+
+  .danger-confirm-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .danger-cancel-btn {
+    padding: var(--space-sm) var(--space-lg);
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .danger-cancel-btn:hover:not(:disabled) {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  .danger-cancel-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .danger-message {
+    margin-top: var(--space-md);
+    font-size: 14px;
+    color: var(--domain-health);
+  }
+
+  .danger-message.success {
     color: var(--domain-family);
   }
 </style>

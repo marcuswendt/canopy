@@ -6,8 +6,14 @@ import { DEFAULT_RAY_STATE, type RayState, type OnboardingPhase, daysUntil } fro
 const STORAGE_KEY = 'canopy_ray_state';
 const PLUGIN_ID = 'ray_coach';
 
-// Check if we're in Electron with canopy API
-const isElectron = browser && typeof window !== 'undefined' && window.canopy?.getPluginState !== undefined;
+// Track whether the store has finished loading from persistence
+export const rayStateLoaded = writable(false);
+
+// Helper to check if we're in Electron with canopy API
+// Must be called at runtime, not module load time, because preload script may not be ready
+function checkIsElectron(): boolean {
+  return typeof window !== 'undefined' && window.canopy?.getPluginState !== undefined;
+}
 
 function createRayStore() {
   const { subscribe, set, update } = writable<RayState>(DEFAULT_RAY_STATE);
@@ -16,11 +22,19 @@ function createRayStore() {
   if (browser) {
     (async () => {
       try {
+        // Check at runtime - preload script should be ready by now
+        const isElectron = checkIsElectron();
+
         if (isElectron) {
           // Load from database via Electron IPC
+          // The state is stored in the settings field as JSON
           const saved = await window.canopy!.getPluginState(PLUGIN_ID);
-          if (saved?.state) {
-            set(JSON.parse(saved.state));
+          if (saved?.settings) {
+            // settings is stored as JSON string in the database
+            const settings = typeof saved.settings === 'string'
+              ? JSON.parse(saved.settings)
+              : saved.settings;
+            set(settings);
           }
         } else {
           // Fallback to localStorage for web dev mode
@@ -31,8 +45,14 @@ function createRayStore() {
         }
       } catch (e) {
         console.error('Failed to load ray state:', e);
+      } finally {
+        // Mark as loaded regardless of success/failure
+        rayStateLoaded.set(true);
       }
     })();
+  } else {
+    // Not in browser, mark as loaded immediately
+    rayStateLoaded.set(true);
   }
 
   // Persist on changes
@@ -42,8 +62,15 @@ function createRayStore() {
       // Debounce saves
       if (saveTimeout) clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => {
-        if (isElectron) {
-          window.canopy!.setPluginState({ pluginId: PLUGIN_ID, state: JSON.stringify(state) });
+        // Check at runtime for Electron API availability
+        if (checkIsElectron()) {
+          // Store the entire ray state in the settings field (which is JSON)
+          window.canopy!.setPluginState({
+            pluginId: PLUGIN_ID,
+            enabled: true,
+            connected: true,
+            settings: state  // Pass the state object directly, it will be JSON.stringified by the IPC handler
+          });
         } else {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
         }

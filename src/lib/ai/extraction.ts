@@ -91,7 +91,142 @@ const DOCUMENT_SCHEMA = {
 };
 
 // =============================================================================
-// ONBOARDING EXTRACTION
+// ONBOARDING DOCUMENT EXTRACTION (Stage 1)
+// =============================================================================
+
+/**
+ * Schema for comprehensive document extraction during onboarding.
+ * This processes the full document and extracts all relevant entities.
+ */
+const ONBOARDING_DOCUMENT_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: {
+      type: 'string',
+      description: 'A 2-3 sentence summary of who this person is and what matters to them',
+    },
+    domains: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', enum: ['work', 'family', 'sport', 'personal', 'health'] },
+          description: { type: 'string', description: 'Brief description of this life area' },
+        },
+        required: ['type'],
+      },
+    },
+    entities: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          type: { type: 'string', enum: ['person', 'project', 'company', 'event', 'goal', 'focus'] },
+          domain: { type: 'string', enum: ['work', 'family', 'sport', 'personal', 'health'] },
+          description: { type: 'string' },
+          relationship: { type: 'string', description: 'For people: wife, husband, son, daughter, colleague, etc.' },
+          priority: { type: 'string', enum: ['critical', 'active', 'background'] },
+          date: { type: 'string', description: 'For events/goals: relevant date or timeframe' },
+          needsConfirmation: { type: 'boolean', description: 'True if this is interpretive (focuses, inferred goals)' },
+        },
+        required: ['name', 'type', 'domain'],
+      },
+    },
+    topicsNotCovered: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Life areas or topics NOT mentioned that would be good to ask about',
+    },
+  },
+  required: ['summary', 'domains', 'entities'],
+};
+
+export interface OnboardingDocumentExtraction {
+  summary: string;
+  domains: Array<{
+    type: 'work' | 'family' | 'sport' | 'personal' | 'health';
+    description?: string;
+  }>;
+  entities: Array<{
+    name: string;
+    type: 'person' | 'project' | 'company' | 'event' | 'goal' | 'focus';
+    domain: 'work' | 'family' | 'sport' | 'personal' | 'health';
+    description?: string;
+    relationship?: string;
+    priority?: 'critical' | 'active' | 'background';
+    date?: string;
+    needsConfirmation?: boolean;
+  }>;
+  topicsNotCovered?: string[];
+}
+
+/**
+ * Extract comprehensive information from an onboarding document.
+ * This is Stage 1 - processes the full document to extract structured data.
+ * The results are then passed to the conversational flow (Stage 2).
+ */
+export async function extractFromOnboardingDocument(
+  content: string,
+  filename?: string
+): Promise<OnboardingDocumentExtraction | null> {
+  const prompt = `You are an expert at understanding people's lives from their personal documents.
+Analyze this onboarding document comprehensively and extract ALL relevant information.
+
+EXTRACTION RULES:
+1. PEOPLE: Extract everyone mentioned with their relationship to the user
+   - Include ages/birthdays if mentioned (create birthday events too)
+   - For children, note their birthdate for birthday events
+
+2. DOMAINS: Identify which life areas are covered
+   - work: career, business, clients, projects
+   - family: spouse, children, parents, home
+   - sport: fitness, training, races, health goals
+   - personal: hobbies, side projects, learning
+   - health: wellness, medical, mental health
+
+3. GOALS: Things the user wants to achieve
+   - "I want to...", "I need to...", "my goal is...", "hoping to..."
+   - Set priority based on emotional weight
+
+4. FOCUSES: Interpretive life themes (ALWAYS set needsConfirmation=true)
+   - Read between the lines for underlying concerns
+   - Examples: "Work-Life Balance", "Body & Fertility", "Structure & Control"
+
+5. EVENTS: Birthdays, anniversaries, races, deadlines
+   - Create birthday events from birthdates mentioned
+   - Include recurring events (anniversaries)
+
+6. PROJECTS: Active work or personal initiatives
+
+7. TOPICS NOT COVERED: What's missing that would be good to ask about?
+   - If no fitness mentioned, note it
+   - If work details sparse, note it
+   - This helps the conversation know what to explore
+
+CRITICAL: Only extract what is EXPLICITLY mentioned. Do not invent or hallucinate.
+For focuses (interpretive themes), ALWAYS set needsConfirmation=true.
+
+${filename ? `Document: ${filename}` : ''}`;
+
+  const result = await extract<OnboardingDocumentExtraction>(
+    prompt,
+    content, // Pass full document as input
+    ONBOARDING_DOCUMENT_SCHEMA,
+    { temperature: 0.3 } // Low temperature for accurate extraction
+  );
+
+  if (isError(result)) {
+    console.error('Onboarding document extraction failed:', result.error, 'code:', result.code);
+    return null;
+  }
+
+  console.log(`Extracted from document: ${result.data.entities.length} entities, ${result.data.domains.length} domains`);
+  return result.data;
+}
+
+// =============================================================================
+// ONBOARDING EXTRACTION (Legacy)
 // =============================================================================
 
 export interface ExtractedDomain {
@@ -670,6 +805,9 @@ export interface OnboardingContext {
     location?: string;
   };
 
+  // Pre-extracted document data (Stage 1 output - use extractFromOnboardingDocument first)
+  documentExtraction?: OnboardingDocumentExtraction;
+
   // What integrations are available to offer
   availableIntegrations: Array<{ id: string; name: string; description: string }>;
 
@@ -800,6 +938,39 @@ Already offered: ${context.offeredIntegrations.join(', ') || 'none'}
 Already connected: ${context.connectedIntegrations.join(', ') || 'none'}`
     : '';
 
+  // Build document content section if documents were uploaded
+  // Truncate each document to prevent prompt overflow (max ~3000 chars per doc, ~10000 total)
+  const MAX_DOC_LENGTH = 3000;
+  const MAX_TOTAL_DOC_LENGTH = 10000;
+
+  let documentContext = '';
+  if (context.documents && context.documents.length > 0) {
+    let totalLength = 0;
+    const truncatedDocs: string[] = [];
+
+    for (const doc of context.documents) {
+      const remainingSpace = MAX_TOTAL_DOC_LENGTH - totalLength;
+      if (remainingSpace <= 0) break;
+
+      const maxForThisDoc = Math.min(MAX_DOC_LENGTH, remainingSpace);
+      const content = doc.content.length > maxForThisDoc
+        ? doc.content.slice(0, maxForThisDoc) + '\n[...truncated]'
+        : doc.content;
+
+      truncatedDocs.push(`--- ${doc.filename} ---\n${content}`);
+      totalLength += content.length;
+    }
+
+    documentContext = `\n\n📄 UPLOADED DOCUMENTS (TREAT AS COMPREHENSIVE USER INPUT):
+${truncatedDocs.join('\n\n')}
+--- END DOCUMENTS ---
+
+⚠️ IMPORTANT: The user has shared these documents as their comprehensive introduction.
+Extract ALL entities (people, projects, events, goals, focuses) from this content.
+Do NOT ask generic questions about information already covered in these documents.
+Your response should acknowledge this rich context and ask about something NOT covered.`;
+  }
+
   const prompt = `You are Ray, a personal coach AI conducting an onboarding conversation.
 
 YOUR GOAL: Understand the user's life context so you can be a useful coach. You need:
@@ -813,6 +984,7 @@ ${conversationHistory}
 WHAT WE'VE COLLECTED:
 ${collectedSummary}
 ${integrationContext}
+${documentContext}
 
 YOUR TASK:
 1. Read the user's last message carefully
@@ -877,17 +1049,26 @@ FOCUS EXTRACTION RULES (important - read between the lines):
 
 User's last message: "${context.messages[context.messages.length - 1]?.content || ''}"`;
 
+  // Pass the user's last message as the input, keep the system instructions in prompt
+  const userMessage = context.messages[context.messages.length - 1]?.content || '';
+
   const result = await extract<OnboardingResponse>(
     prompt,
-    '', // Content is in the prompt
+    userMessage, // Pass user message as input, not empty string
     ONBOARDING_RESPONSE_SCHEMA,
-    { temperature: 0.5, maxTokens: 2000 } // Lower temp to reduce hallucination, more tokens for complex responses
+    { temperature: 0.5 }
   );
 
   if (isError(result)) {
-    // Fallback response
+    // Log the actual error for debugging
+    console.error('Onboarding extraction failed:', result.error, 'code:', result.code);
+
+    // Return a more informative fallback based on error type
+    const hasDocuments = context.documents && context.documents.length > 0;
     return {
-      response: "Tell me more about what keeps you busy day-to-day.",
+      response: hasDocuments
+        ? "I received your document. Let me review it. Could you tell me a bit more about yourself while I process this?"
+        : "Tell me more about what keeps you busy day-to-day.",
       isComplete: false,
     };
   }

@@ -86,14 +86,14 @@
       <!-- Quick suggestions -->
       {#if inputFocused && !inputValue}
         <div class="suggestions animate-slide-up">
-          <button class="suggestion" onmousedown={() => inputValue = "How's the Samsung pitch coming along?"}>
-            Samsung pitch status
+          <button class="suggestion" onmousedown={() => inputValue = "What should I focus on today?"}>
+            Daily focus
           </button>
-          <button class="suggestion" onmousedown={() => inputValue = "What should I focus on this week?"}>
-            Weekly focus
+          <button class="suggestion" onmousedown={() => inputValue = "What's coming up this week?"}>
+            Weekly overview
           </button>
-          <button class="suggestion" onmousedown={() => inputValue = "Am I on track for HMR training?"}>
-            Training check
+          <button class="suggestion" onmousedown={() => inputValue = "How am I doing on my priorities?"}>
+            Priority check
           </button>
         </div>
       {/if}
@@ -156,38 +156,21 @@
     inset: 0;
   }
   
-  .background-fallback.day {
+  .background-fallback.day,
+  .background-gradient.twilight,
+  .background-gradient.dark {
     background: linear-gradient(
       180deg,
-      #87ceeb 0%,
-      #98d4a4 30%,
-      #4a7c59 60%,
-      #2d5a3d 100%
+      var(--gradient-sky) 0%,
+      var(--gradient-mid) 30%,
+      var(--gradient-low) 60%,
+      var(--gradient-ground) 100%
     );
   }
-  
+
   .background-gradient {
     width: 100%;
     height: 100%;
-  }
-  
-  .background-gradient.twilight {
-    background: linear-gradient(
-      180deg,
-      #1a1a2e 0%,
-      #16213e 30%,
-      #1f4068 60%,
-      #e8d5b7 100%
-    );
-  }
-  
-  .background-gradient.dark {
-    background: radial-gradient(
-      ellipse at top,
-      #0d1f3c 0%,
-      #0a1628 50%,
-      #050d18 100%
-    );
   }
   
   .background-overlay {
@@ -247,28 +230,23 @@
     font-size: 16px;
     border: none;
     border-radius: var(--radius-lg);
-    background: rgba(255, 255, 255, 0.95);
+    background: var(--card-bg);
     color: var(--text-primary);
-    box-shadow: 
-      0 4px 24px rgba(0, 0, 0, 0.12),
+    box-shadow:
+      0 4px 24px var(--card-shadow),
       0 0 0 1px rgba(255, 255, 255, 0.1);
     transition: all var(--transition-base);
   }
-  
+
   .main-input::placeholder {
     color: var(--text-muted);
   }
-  
+
   .main-input:focus {
     outline: none;
-    box-shadow: 
-      0 8px 32px rgba(0, 0, 0, 0.18),
+    box-shadow:
+      0 8px 32px var(--card-shadow),
       0 0 0 2px var(--accent);
-  }
-  
-  :global([data-theme="dark"]) .main-input {
-    background: rgba(17, 29, 46, 0.95);
-    color: var(--text-primary);
   }
   
   .input-actions {

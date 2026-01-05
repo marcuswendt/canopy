@@ -150,6 +150,36 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    // Handle formatting shortcuts (Cmd/Ctrl + key)
+    if (e.metaKey || e.ctrlKey) {
+      switch (e.key.toLowerCase()) {
+        case 'b': // Bold
+          e.preventDefault();
+          wrapSelection('**', '**');
+          return;
+        case 'i': // Italic
+          e.preventDefault();
+          wrapSelection('*', '*');
+          return;
+        case 'k': // Link
+          e.preventDefault();
+          insertLink();
+          return;
+        case '1': // Heading 1
+          e.preventDefault();
+          insertHeading(1);
+          return;
+        case '2': // Heading 2
+          e.preventDefault();
+          insertHeading(2);
+          return;
+        case '3': // Heading 3
+          e.preventDefault();
+          insertHeading(3);
+          return;
+      }
+    }
+
     if (showPopover && filteredEntities.length > 0) {
       switch (e.key) {
         case 'ArrowDown':
@@ -172,6 +202,12 @@
       }
       return;
     }
+
+    // Handle Tab for list indentation (only when popover not showing)
+    if (handleListIndent(e)) return;
+
+    // Handle list continuation on Enter
+    if (handleListContinuation(e)) return;
 
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -210,6 +246,184 @@
       domain: '🏷️',
     };
     return icons[type] || '•';
+  }
+
+  // Wrap selected text with formatting characters
+  function wrapSelection(before: string, after: string, placeholder = '') {
+    if (!textareaEl) return;
+
+    const start = textareaEl.selectionStart;
+    const end = textareaEl.selectionEnd;
+    const selectedText = value.slice(start, end);
+    const textToWrap = selectedText || placeholder;
+
+    const newText = value.slice(0, start) + before + textToWrap + after + value.slice(end);
+    value = newText;
+
+    // Position cursor appropriately
+    requestAnimationFrame(() => {
+      if (selectedText) {
+        // Select the wrapped text
+        textareaEl.setSelectionRange(start + before.length, start + before.length + textToWrap.length);
+      } else {
+        // Position cursor inside the formatting (or select placeholder)
+        textareaEl.setSelectionRange(start + before.length, start + before.length + placeholder.length);
+      }
+      textareaEl.focus();
+    });
+  }
+
+  // Insert link formatting
+  function insertLink() {
+    if (!textareaEl) return;
+
+    const start = textareaEl.selectionStart;
+    const end = textareaEl.selectionEnd;
+    const selectedText = value.slice(start, end);
+
+    if (selectedText) {
+      // Wrap selection as link text
+      const newText = value.slice(0, start) + '[' + selectedText + '](url)' + value.slice(end);
+      value = newText;
+
+      // Select "url" placeholder
+      requestAnimationFrame(() => {
+        const urlStart = start + selectedText.length + 3; // [text](
+        textareaEl.setSelectionRange(urlStart, urlStart + 3);
+        textareaEl.focus();
+      });
+    } else {
+      // Insert empty link template
+      const newText = value.slice(0, start) + '[](url)' + value.slice(end);
+      value = newText;
+
+      // Position cursor inside []
+      requestAnimationFrame(() => {
+        textareaEl.setSelectionRange(start + 1, start + 1);
+        textareaEl.focus();
+      });
+    }
+  }
+
+  // Insert heading at start of current line
+  function insertHeading(level: number) {
+    if (!textareaEl) return;
+
+    const start = textareaEl.selectionStart;
+    const prefix = '#'.repeat(level) + ' ';
+
+    // Find the start of the current line
+    const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+    const lineEnd = value.indexOf('\n', start);
+    const actualLineEnd = lineEnd === -1 ? value.length : lineEnd;
+    const currentLine = value.slice(lineStart, actualLineEnd);
+
+    // Remove any existing heading prefix
+    const existingHeading = currentLine.match(/^#{1,6}\s*/);
+    const cleanLine = existingHeading ? currentLine.slice(existingHeading[0].length) : currentLine;
+
+    // Build new value
+    const newText = value.slice(0, lineStart) + prefix + cleanLine + value.slice(actualLineEnd);
+    value = newText;
+
+    // Position cursor after the heading prefix
+    requestAnimationFrame(() => {
+      const newCursorPos = lineStart + prefix.length;
+      textareaEl.setSelectionRange(newCursorPos, newCursorPos);
+      textareaEl.focus();
+    });
+  }
+
+  // Handle list continuation and auto-conversion
+  function handleListContinuation(e: KeyboardEvent): boolean {
+    if (e.key !== 'Enter' || e.shiftKey) return false;
+    if (!textareaEl) return false;
+
+    const start = textareaEl.selectionStart;
+    const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+    const currentLine = value.slice(lineStart, start);
+
+    // Check if current line is a list item
+    const listMatch = currentLine.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
+    if (!listMatch) return false;
+
+    const [, indent, marker, content] = listMatch;
+
+    // If the line is empty (just the marker), remove the marker and exit list mode
+    if (!content.trim()) {
+      e.preventDefault();
+      const newText = value.slice(0, lineStart) + value.slice(start);
+      value = newText;
+      requestAnimationFrame(() => {
+        textareaEl.setSelectionRange(lineStart, lineStart);
+        textareaEl.focus();
+      });
+      return true;
+    }
+
+    // Continue the list on the next line
+    e.preventDefault();
+    let nextMarker = marker;
+
+    // Increment numbered lists
+    const numMatch = marker.match(/^(\d+)\.$/);
+    if (numMatch) {
+      nextMarker = (parseInt(numMatch[1]) + 1) + '.';
+    }
+
+    const insertion = '\n' + indent + nextMarker + ' ';
+    const newText = value.slice(0, start) + insertion + value.slice(start);
+    value = newText;
+
+    requestAnimationFrame(() => {
+      const newPos = start + insertion.length;
+      textareaEl.setSelectionRange(newPos, newPos);
+      textareaEl.focus();
+    });
+
+    return true;
+  }
+
+  // Handle Tab for list indentation
+  function handleListIndent(e: KeyboardEvent): boolean {
+    if (e.key !== 'Tab') return false;
+    if (!textareaEl) return false;
+
+    const start = textareaEl.selectionStart;
+    const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+    const lineEnd = value.indexOf('\n', start);
+    const actualLineEnd = lineEnd === -1 ? value.length : lineEnd;
+    const currentLine = value.slice(lineStart, actualLineEnd);
+
+    // Check if current line is a list item
+    const listMatch = currentLine.match(/^(\s*)([-*]|\d+\.)\s/);
+    if (!listMatch) return false;
+
+    e.preventDefault();
+    const [, indent] = listMatch;
+
+    if (e.shiftKey) {
+      // Dedent - remove up to 2 spaces
+      if (indent.length > 0) {
+        const removeSpaces = Math.min(2, indent.length);
+        const newText = value.slice(0, lineStart) + currentLine.slice(removeSpaces) + value.slice(actualLineEnd);
+        value = newText;
+        requestAnimationFrame(() => {
+          textareaEl.setSelectionRange(Math.max(lineStart, start - removeSpaces), Math.max(lineStart, start - removeSpaces));
+          textareaEl.focus();
+        });
+      }
+    } else {
+      // Indent - add 2 spaces
+      const newText = value.slice(0, lineStart) + '  ' + currentLine + value.slice(actualLineEnd);
+      value = newText;
+      requestAnimationFrame(() => {
+        textareaEl.setSelectionRange(start + 2, start + 2);
+        textareaEl.focus();
+      });
+    }
+
+    return true;
   }
 
   // Export method to get mentions

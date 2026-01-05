@@ -1242,8 +1242,10 @@ ipcMain.handle('profile:switch', async (event, { profileId }) => {
     currentProfile = profileId;
     UPLOADS_DIR = getProfilePaths(currentProfile).uploads;
 
-    // Save to config
-    saveConfig({ profile: profileId });
+    // Save to config (preserve customProfiles)
+    const config = getConfig();
+    config.profile = profileId;
+    saveConfig(config);
 
     // Reinitialize database with new profile
     initDatabase();

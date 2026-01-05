@@ -42,6 +42,8 @@
   let mentionInputRef: MentionInput;
   let showArtifacts = $state(true);
   let messagesContainer: HTMLDivElement;
+  let memoryPromptDismissed = $state(false);
+  let memoryPromptSaving = $state(false);
 
   // Auto-scroll to bottom when messages change
   $effect(() => {
@@ -284,6 +286,66 @@
     }
   }
 
+  /**
+   * Save a pattern memory when user clicks "Yes, remember this"
+   * Summarizes the conversation themes and entities discussed
+   */
+  async function savePatternMemory() {
+    if (memoryPromptSaving || !threadId) return;
+
+    memoryPromptSaving = true;
+
+    try {
+      // Build a summary of the conversation pattern
+      const domains = [...threadDomains];
+      const entityNames = contextEntities.map(e => e.name);
+
+      // Create a pattern description based on what was discussed
+      let patternContent = 'Pattern noted: ';
+
+      if (domains.length > 1) {
+        patternContent += `Cross-domain discussion connecting ${domains.join(', ')}. `;
+      } else if (domains.length === 1) {
+        patternContent += `Focus on ${domains[0]}. `;
+      }
+
+      if (entityNames.length > 0) {
+        patternContent += `Involves: ${entityNames.join(', ')}.`;
+      }
+
+      // If we have specific themes, add them
+      if (domains.includes('work') && domains.includes('family')) {
+        patternContent = 'Pattern noted: The interplay between work and family life - tracking how these domains interact and affect each other.';
+      } else if (domains.includes('sport') && domains.includes('work')) {
+        patternContent = 'Pattern noted: Balancing athletic training with professional responsibilities - how these priorities compete and complement each other.';
+      }
+
+      // Add entity context if available
+      if (entityNames.length > 0) {
+        patternContent += ` Key entities: ${entityNames.join(', ')}.`;
+      }
+
+      await createMemory(
+        patternContent,
+        'thread',
+        threadId,
+        contextEntities.map(e => e.id),
+        0.8 // High importance for user-confirmed patterns
+      );
+
+      memoryPromptDismissed = true;
+      console.log('Pattern memory saved:', patternContent);
+    } catch (err) {
+      console.error('Failed to save pattern memory:', err);
+    } finally {
+      memoryPromptSaving = false;
+    }
+  }
+
+  function dismissMemoryPrompt() {
+    memoryPromptDismissed = true;
+  }
+
   onDestroy(() => {
     if (activeStream) {
       activeStream.cancel();
@@ -331,12 +393,18 @@
         {/if}
       </div>
       
-      {#if messages.length >= 4 && !isLoading}
+      {#if messages.length >= 4 && !isLoading && !memoryPromptDismissed && threadDomains.size >= 2}
         <div class="memory-prompt animate-fade-in">
-          <p>Want me to remember this pattern? The interplay between training, work, and family seems worth tracking.</p>
+          <p>Want me to remember this pattern? {#if threadDomains.has('work') && threadDomains.has('family')}The interplay between work and family seems worth tracking.{:else if threadDomains.has('sport') && threadDomains.has('work')}The balance between training and work seems worth tracking.{:else}The connection between {[...threadDomains].join(' and ')} seems worth tracking.{/if}</p>
           <div class="memory-actions">
-            <button class="memory-btn primary">Yes, remember this</button>
-            <button class="memory-btn">Not now</button>
+            <button
+              class="memory-btn primary"
+              onclick={savePatternMemory}
+              disabled={memoryPromptSaving}
+            >
+              {memoryPromptSaving ? 'Saving...' : 'Yes, remember this'}
+            </button>
+            <button class="memory-btn" onclick={dismissMemoryPrompt}>Not now</button>
           </div>
         </div>
       {/if}

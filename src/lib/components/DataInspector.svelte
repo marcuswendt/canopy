@@ -30,6 +30,85 @@
   let selectedThread = $state<Thread | null>(null);
   let threadMessages = $state<Message[]>([]);
 
+  // Entity view controls
+  let entitySearch = $state('');
+  let entityViewMode = $state<'grouped' | 'flat'>('grouped');
+  let compactMode = $state(true);
+  let collapsedGroups = $state<Set<string>>(new Set());
+
+  // Entity type labels for display
+  const typeLabels: Record<string, string> = {
+    person: 'People',
+    project: 'Projects',
+    domain: 'Domains',
+    concept: 'Concepts',
+    event: 'Events',
+    goal: 'Goals',
+    focus: 'Focus Areas'
+  };
+
+  const domainLabels: Record<string, string> = {
+    work: 'Work',
+    family: 'Family',
+    sport: 'Sport',
+    personal: 'Personal',
+    health: 'Health'
+  };
+
+  // Filter entities by search
+  let filteredEntities = $derived(
+    entitySearch.trim()
+      ? dbEntities.filter(e =>
+          e.name.toLowerCase().includes(entitySearch.toLowerCase()) ||
+          e.type.toLowerCase().includes(entitySearch.toLowerCase()) ||
+          e.domain.toLowerCase().includes(entitySearch.toLowerCase())
+        )
+      : dbEntities
+  );
+
+  // Group entities by type
+  let entitiesByType = $derived(() => {
+    const groups: Record<string, Entity[]> = {};
+    for (const entity of filteredEntities) {
+      if (!groups[entity.type]) groups[entity.type] = [];
+      groups[entity.type].push(entity);
+    }
+    // Sort by type order
+    const typeOrder = ['person', 'project', 'goal', 'focus', 'concept', 'event', 'domain'];
+    return typeOrder
+      .filter(t => groups[t]?.length > 0)
+      .map(type => ({ type, label: typeLabels[type] || type, entities: groups[type] }));
+  });
+
+  // Summary stats
+  let entityStats = $derived(() => {
+    const byType: Record<string, number> = {};
+    const byDomain: Record<string, number> = {};
+    for (const e of dbEntities) {
+      byType[e.type] = (byType[e.type] || 0) + 1;
+      byDomain[e.domain] = (byDomain[e.domain] || 0) + 1;
+    }
+    return { byType, byDomain, total: dbEntities.length };
+  });
+
+  function toggleGroup(type: string) {
+    const next = new Set(collapsedGroups);
+    if (next.has(type)) {
+      next.delete(type);
+    } else {
+      next.add(type);
+    }
+    collapsedGroups = next;
+  }
+
+  function expandAll() {
+    collapsedGroups = new Set();
+  }
+
+  function collapseAll() {
+    collapsedGroups = new Set(entitiesByType().map(g => g.type));
+  }
+
   async function loadData() {
     try {
       dbEntities = await getEntities();
@@ -117,31 +196,133 @@
     <div class="inspector-content">
       {#if activeTab === 'database'}
         <div class="db-section">
-          <h3>Entities ({dbEntities.length})</h3>
-          <div class="data-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Domain</th>
-                  <th>Mentions</th>
-                  <th>Last Active</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each dbEntities as entity}
-                  <tr>
-                    <td class="name">{entity.name}</td>
-                    <td><span class="badge type">{entity.type}</span></td>
-                    <td><span class="badge domain">{entity.domain}</span></td>
-                    <td class="num">{entity.mention_count}</td>
-                    <td class="date">{formatDate(entity.last_mentioned)}</td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
+          <div class="section-header">
+            <h3>Entities ({dbEntities.length})</h3>
+            <div class="view-controls">
+              <button
+                class="view-btn"
+                class:active={entityViewMode === 'grouped'}
+                onclick={() => entityViewMode = 'grouped'}
+                title="Group by type"
+              >
+                Grouped
+              </button>
+              <button
+                class="view-btn"
+                class:active={entityViewMode === 'flat'}
+                onclick={() => entityViewMode = 'flat'}
+                title="Flat list"
+              >
+                Flat
+              </button>
+              <button
+                class="view-btn compact-toggle"
+                class:active={compactMode}
+                onclick={() => compactMode = !compactMode}
+                title="Compact mode"
+              >
+                Compact
+              </button>
+            </div>
           </div>
+
+          <!-- Summary stats -->
+          <div class="entity-stats">
+            <div class="stats-row">
+              {#each Object.entries(entityStats().byType) as [type, count]}
+                <span class="stat-chip type-{type}">
+                  {typeLabels[type] || type}: {count}
+                </span>
+              {/each}
+            </div>
+            <div class="stats-row">
+              {#each Object.entries(entityStats().byDomain) as [domain, count]}
+                <span class="stat-chip domain-{domain}">
+                  {domainLabels[domain] || domain}: {count}
+                </span>
+              {/each}
+            </div>
+          </div>
+
+          <!-- Search -->
+          <div class="entity-search">
+            <input
+              type="text"
+              placeholder="Search entities..."
+              bind:value={entitySearch}
+              class="search-input"
+            />
+            {#if entitySearch}
+              <span class="search-count">{filteredEntities.length} results</span>
+            {/if}
+          </div>
+
+          {#if entityViewMode === 'grouped'}
+            <!-- Grouped view -->
+            <div class="expand-controls">
+              <button class="link-btn" onclick={expandAll}>Expand all</button>
+              <button class="link-btn" onclick={collapseAll}>Collapse all</button>
+            </div>
+            <div class="entity-groups" class:compact={compactMode}>
+              {#each entitiesByType() as group}
+                <div class="entity-group">
+                  <button
+                    class="group-header"
+                    onclick={() => toggleGroup(group.type)}
+                  >
+                    <span class="collapse-icon">{collapsedGroups.has(group.type) ? '▶' : '▼'}</span>
+                    <span class="group-label">{group.label}</span>
+                    <span class="group-count">{group.entities.length}</span>
+                  </button>
+                  {#if !collapsedGroups.has(group.type)}
+                    <div class="group-entities">
+                      {#each group.entities as entity}
+                        <div class="entity-row" class:compact={compactMode}>
+                          <span class="entity-name">{entity.name}</span>
+                          <span class="entity-domain badge domain-{entity.domain}">{entity.domain}</span>
+                          {#if !compactMode}
+                            <span class="entity-meta">
+                              {entity.mention_count || 0} mentions
+                            </span>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <!-- Flat table view -->
+            <div class="data-table" class:compact={compactMode}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Domain</th>
+                    {#if !compactMode}
+                      <th>Mentions</th>
+                      <th>Last Active</th>
+                    {/if}
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each filteredEntities as entity}
+                    <tr>
+                      <td class="name">{entity.name}</td>
+                      <td><span class="badge type">{entity.type}</span></td>
+                      <td><span class="badge domain domain-{entity.domain}">{entity.domain}</span></td>
+                      {#if !compactMode}
+                        <td class="num">{entity.mention_count}</td>
+                        <td class="date">{formatDate(entity.last_mentioned)}</td>
+                      {/if}
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
         </div>
 
         <div class="db-section">
@@ -734,5 +915,229 @@
   .shortcut-hint {
     font-size: 11px;
     color: var(--text-muted);
+  }
+
+  /* Entity section improvements */
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-md);
+  }
+
+  .section-header h3 {
+    margin: 0;
+  }
+
+  .view-controls {
+    display: flex;
+    gap: 4px;
+  }
+
+  .view-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+  }
+
+  .view-btn:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+  }
+
+  .view-btn.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+
+  .entity-stats {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-md);
+    padding: var(--space-sm);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+  }
+
+  .stats-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .stat-chip {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+  }
+
+  .stat-chip.type-person { background: #e3f2fd; color: #1565c0; }
+  .stat-chip.type-project { background: #f3e5f5; color: #7b1fa2; }
+  .stat-chip.type-concept { background: #fff3e0; color: #ef6c00; }
+  .stat-chip.type-goal { background: #e8f5e9; color: #2e7d32; }
+  .stat-chip.type-focus { background: #fce4ec; color: #c2185b; }
+  .stat-chip.type-event { background: #e0f7fa; color: #00838f; }
+  .stat-chip.type-domain { background: var(--bg-tertiary); color: var(--text-secondary); }
+
+  .stat-chip.domain-work { background: var(--domain-work-bg, #e3f2fd); color: var(--domain-work, #1565c0); }
+  .stat-chip.domain-family { background: var(--domain-family-bg, #e8f5e9); color: var(--domain-family, #2e7d32); }
+  .stat-chip.domain-sport { background: var(--domain-sport-bg, #fff3e0); color: var(--domain-sport, #ef6c00); }
+  .stat-chip.domain-personal { background: var(--domain-personal-bg, #f3e5f5); color: var(--domain-personal, #7b1fa2); }
+  .stat-chip.domain-health { background: var(--domain-health-bg, #fce4ec); color: var(--domain-health, #c2185b); }
+
+  .entity-search {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+  }
+
+  .search-input {
+    flex: 1;
+    padding: var(--space-sm) var(--space-md);
+    font-size: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+  }
+
+  .search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .search-count {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .expand-controls {
+    display: flex;
+    gap: var(--space-md);
+    margin-bottom: var(--space-sm);
+  }
+
+  .link-btn {
+    font-size: 11px;
+    color: var(--accent);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .link-btn:hover {
+    text-decoration: underline;
+  }
+
+  .entity-groups {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .entity-group {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .group-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg-secondary);
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+
+  .group-header:hover {
+    background: var(--bg-tertiary);
+  }
+
+  .collapse-icon {
+    font-size: 10px;
+    color: var(--text-muted);
+    width: 12px;
+  }
+
+  .group-label {
+    font-weight: 600;
+    flex: 1;
+  }
+
+  .group-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+  }
+
+  .group-entities {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-xs);
+  }
+
+  .entity-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-sm);
+  }
+
+  .entity-row:hover {
+    background: var(--bg-secondary);
+  }
+
+  .entity-row.compact {
+    padding: 4px var(--space-md);
+  }
+
+  .entity-name {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+
+  .entity-domain {
+    font-size: 9px;
+  }
+
+  .entity-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  /* Domain-specific badge colors */
+  .badge.domain-work { background: var(--domain-work-bg, #e3f2fd); color: var(--domain-work, #1565c0); }
+  .badge.domain-family { background: var(--domain-family-bg, #e8f5e9); color: var(--domain-family, #2e7d32); }
+  .badge.domain-sport { background: var(--domain-sport-bg, #fff3e0); color: var(--domain-sport, #ef6c00); }
+  .badge.domain-personal { background: var(--domain-personal-bg, #f3e5f5); color: var(--domain-personal, #7b1fa2); }
+  .badge.domain-health { background: var(--domain-health-bg, #fce4ec); color: var(--domain-health, #c2185b); }
+
+  .data-table.compact th,
+  .data-table.compact td {
+    padding: 4px var(--space-sm);
+  }
+
+  .entity-groups.compact .entity-row {
+    padding: 3px var(--space-md);
   }
 </style>

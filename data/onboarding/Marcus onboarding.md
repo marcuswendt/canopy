@@ -8,7 +8,7 @@ Ok, let's start with WORK:
 Im the founder + Creative CEO of FIELD.IO a design studio based in London, UK + Berlin, DE.
 
 You can find us here: http://www.field.io
-And more about me: https://www.marcuswendt.io/
+And more about me: https://www.marcuswendt.io
 
 
 It's Jan 5, we're back to work after a busy 2025. Priorities right now are:

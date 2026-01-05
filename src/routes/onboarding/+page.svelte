@@ -265,10 +265,27 @@
     }
   }
 
+  // Track which uploads we've already processed for AI response
+  let processedUploadIds = $state<Set<string>>(new Set());
+
   // Process completed uploads and extract context for onboarding
   $effect(() => {
     const completed = $completedUploads;
+    let hasNewDocuments = false;
+
     for (const upload of completed) {
+      // Skip if already processed
+      if (processedUploadIds.has(upload.id)) continue;
+
+      // Mark as processed
+      processedUploadIds = new Set([...processedUploadIds, upload.id]);
+
+      // Check if this is a substantial document (not just an image)
+      const hasContent = upload.textContent || upload.extracted?.text;
+      if (hasContent && hasContent.length > 100) {
+        hasNewDocuments = true;
+      }
+
       if (upload.extracted?.entities && upload.extracted.entities.length > 0) {
         // Add extracted entities to our list
         for (const entity of upload.extracted.entities) {
@@ -286,7 +303,149 @@
         }
       }
     }
+
+    // If we just processed a substantial document, trigger AI to respond intelligently
+    if (hasNewDocuments && currentPhase === 'conversation' && !isProcessing) {
+      // Auto-trigger AI response to process the document content
+      processDocumentUpload();
+    }
   });
+
+  // Process a newly uploaded document and get AI response
+  async function processDocumentUpload() {
+    isProcessing = true;
+
+    // Gather document content from completed uploads
+    const documentContents = $completedUploads
+      .filter(u => u.textContent || u.extracted?.text)
+      .map(u => ({
+        filename: u.filename,
+        content: u.textContent || u.extracted?.text || '',
+      }))
+      .filter(d => d.content.length > 0);
+
+    if (documentContents.length === 0) {
+      isProcessing = false;
+      return;
+    }
+
+    // Build context with document content
+    const context: OnboardingContext = {
+      messages: messages,
+      collected: {
+        domains: collectedDomains,
+        entities: collectedEntities,
+        urls: collectedUrls,
+        integrations: connectedIntegrations,
+        userName: profileValues.name,
+        location: profileValues.location,
+      },
+      documents: documentContents,
+      availableIntegrations: availableIntegrations.map(i => ({
+        id: i.id,
+        name: i.name,
+        description: i.description,
+      })),
+      offeredIntegrations: offeredIntegrations,
+      connectedIntegrations: connectedIntegrations,
+    };
+
+    // Get AI response that acknowledges the document
+    const response = await generateOnboardingResponse(context);
+
+    isProcessing = false;
+
+    // Process extracted entities and domains from the document
+    if (response.extractedDomains && response.extractedDomains.length > 0) {
+      for (const domain of response.extractedDomains) {
+        if (!domainExists(domain.type)) {
+          collectedDomains = [...collectedDomains, domain.type];
+          const domainLabels: Record<string, string> = {
+            work: 'Work & Career',
+            family: 'Family & Home',
+            sport: 'Sport & Fitness',
+            personal: 'Personal Projects',
+            health: 'Health & Wellness'
+          };
+          const created = await createEntity(
+            'domain',
+            domainLabels[domain.type] || domain.type,
+            domain.type as any
+          );
+          if (created?.id) {
+            await updateEntityMention(created.id);
+            existingEntities = [...existingEntities, created];
+          }
+          rayState.addDomain({
+            id: domain.type,
+            name: domainLabels[domain.type] || domain.type,
+            type: domain.type,
+            entities: [],
+          });
+        }
+      }
+    }
+
+    if (response.extractedEntities && response.extractedEntities.length > 0) {
+      for (const entity of response.extractedEntities) {
+        if (!entityExists(entity.name)) {
+          if (entity.needsConfirmation) {
+            const alreadyPending = pendingConfirmations.some(
+              p => normalizeName(p.name) === normalizeName(entity.name)
+            );
+            if (!alreadyPending) {
+              pendingConfirmations = [...pendingConfirmations, {
+                name: entity.name,
+                type: entity.type,
+                domain: entity.domain,
+                description: entity.description
+              }];
+            }
+            continue;
+          }
+
+          collectedEntities = [...collectedEntities, entity];
+          const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept' | 'goal' | 'focus'> = {
+            person: 'person',
+            project: 'project',
+            company: 'project',
+            event: 'event',
+            goal: 'goal',
+            focus: 'focus',
+          };
+          let description = entity.description || entity.relationship || '';
+          if (entity.type === 'goal' || entity.type === 'focus') {
+            const parts: string[] = [];
+            if (entity.priority) parts.push(`Priority: ${entity.priority}`);
+            if (entity.targetDate) parts.push(`Target: ${entity.targetDate}`);
+            if (description) parts.push(description);
+            description = parts.join(' | ');
+          } else if (entity.type === 'event' && entity.date) {
+            description = entity.date + (description ? ` | ${description}` : '');
+          }
+          const created = await createEntity(
+            typeMap[entity.type] || 'project',
+            entity.name,
+            entity.domain as any,
+            description
+          );
+          if (created?.id) {
+            await updateEntityMention(created.id);
+            existingEntities = [...existingEntities, created];
+          }
+        }
+      }
+    }
+
+    // Show AI's response acknowledging the document
+    addRayMessage(response.response);
+
+    // Check if onboarding is complete
+    if (response.isComplete) {
+      await new Promise(r => setTimeout(r, 600));
+      await finishOnboardingWithSummary();
+    }
+  }
 
   // Track URLs that have been fetched and their extracted context
   let fetchedUrlContexts = $state<Map<string, { title?: string; summary?: string; entities?: string[] }>>(new Map());
@@ -402,6 +561,7 @@
    * Single function that handles all onboarding conversation intelligently
    */
   async function processConversation(input: string) {
+    try {
     // Extract URLs and add to persona (before AI call)
     const detectedUrls = input.match(URL_REGEX) || [];
     for (const url of detectedUrls) {
@@ -416,6 +576,15 @@
       }
     }
 
+    // Gather document content from completed uploads
+    const documentContents = $completedUploads
+      .filter(u => u.textContent || u.extracted?.text)
+      .map(u => ({
+        filename: u.filename,
+        content: u.textContent || u.extracted?.text || '',
+      }))
+      .filter(d => d.content.length > 0);
+
     // Build context for AI
     const context: OnboardingContext = {
       messages: messages,
@@ -427,6 +596,7 @@
         userName: profileValues.name,
         location: profileValues.location,
       },
+      documents: documentContents.length > 0 ? documentContents : undefined,
       availableIntegrations: availableIntegrations.map(i => ({
         id: i.id,
         name: i.name,
@@ -554,6 +724,10 @@
     if (response.isComplete && !showIntegrationPicker) {
       await new Promise(r => setTimeout(r, 600));
       await finishOnboardingWithSummary();
+    }
+    } catch (err) {
+      console.error('Onboarding conversation error:', err);
+      addRayMessage("I had trouble processing that. Could you try rephrasing or sharing smaller pieces of information?");
     }
   }
 
@@ -686,6 +860,15 @@
   async function continueConversationAfterIntegration() {
     isProcessing = true;
 
+    // Gather document content from completed uploads
+    const documentContents = $completedUploads
+      .filter(u => u.textContent || u.extracted?.text)
+      .map(u => ({
+        filename: u.filename,
+        content: u.textContent || u.extracted?.text || '',
+      }))
+      .filter(d => d.content.length > 0);
+
     // Build context matching the existing pattern
     const context: OnboardingContext = {
       messages: messages,
@@ -697,6 +880,7 @@
         userName: profileValues.name,
         location: profileValues.location,
       },
+      documents: documentContents.length > 0 ? documentContents : undefined,
       availableIntegrations: availableIntegrations.map(i => ({
         id: i.id,
         name: i.name,

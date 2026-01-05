@@ -14,11 +14,8 @@ export const theme = writable<'day' | 'twilight' | 'dark'>('day');
 // Active thread ID
 export const activeThreadId = writable<string | null>(null);
 
-// Pinned items
-export const pinnedItems = writable([
-  { id: 'samsung', name: 'Samsung', domain: 'work', icon: '◆' },
-  { id: 'hmr-2026', name: 'HMR 2026', domain: 'sport', icon: '🚴' },
-]);
+// Pinned items (populated from user data)
+export const pinnedItems = writable<{ id: string; name: string; domain: string; icon?: string }[]>([]);
 
 // Auto-detect and apply theme based on time
 export function initTheme() {

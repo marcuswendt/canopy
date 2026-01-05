@@ -45,17 +45,28 @@
       });
     }
 
+    // Listen for navigation events (from Electron menu, e.g., Cmd+,)
+    let removeNavListener: (() => void) | undefined;
+    if (typeof window !== 'undefined' && window.canopy?.onNavigate) {
+      removeNavListener = window.canopy.onNavigate((path: string) => {
+        goto(path);
+      });
+    }
+
     return () => {
       cleanup?.();
       window.removeEventListener('keydown', handleKeydown);
       removeMenuListener?.();
+      removeNavListener?.();
     };
   });
 
-  // Redirect to onboarding if needed (but not if already there)
+  // Redirect to onboarding if needed (but not if already there or in settings)
   // Wait for ray state to load from persistence before making routing decisions
   $effect(() => {
-    if ($rayStateLoaded && $needsOnboarding && !$page.url.pathname.includes('onboarding')) {
+    const path = $page.url.pathname;
+    const isExempt = path.includes('onboarding') || path.includes('settings');
+    if ($rayStateLoaded && $needsOnboarding && !isExempt) {
       goto('/onboarding');
     }
   });

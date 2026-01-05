@@ -26,6 +26,14 @@
   /* Accent */
   --accent: #10b981;
   --accent-hover: #059669;
+
+  /* Onboarding gradient (day) */
+  --gradient-sky: #87ceeb;
+  --gradient-mid: #98d4a4;
+  --gradient-low: #4a7c59;
+  --gradient-ground: #2d5a3d;
+  --card-bg: rgba(255, 255, 255, 0.95);
+  --card-shadow: rgba(0, 0, 0, 0.1);
   
   /* Spacing */
   --space-xs: 4px;
@@ -65,6 +73,14 @@
   --text-muted: #9ca3af;
   --border: rgba(255, 255, 255, 0.1);
   --shadow: rgba(0, 0, 0, 0.3);
+
+  /* Onboarding gradient (twilight) */
+  --gradient-sky: #4a5568;
+  --gradient-mid: #2d4a3e;
+  --gradient-low: #1a3a2e;
+  --gradient-ground: #0f2a1e;
+  --card-bg: rgba(40, 53, 72, 0.95);
+  --card-shadow: rgba(0, 0, 0, 0.3);
 }
 
 /* Dark Mode */
@@ -77,6 +93,14 @@
   --text-muted: #64748b;
   --border: rgba(255, 255, 255, 0.08);
   --shadow: rgba(0, 0, 0, 0.5);
+
+  /* Onboarding gradient (dark/night) */
+  --gradient-sky: #1a1a2e;
+  --gradient-mid: #16213e;
+  --gradient-low: #0f1a2e;
+  --gradient-ground: #0a1628;
+  --card-bg: rgba(17, 29, 46, 0.95);
+  --card-shadow: rgba(0, 0, 0, 0.5);
 }
 
 /* Base Reset */
