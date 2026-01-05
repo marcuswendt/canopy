@@ -8,6 +8,7 @@ export interface UserSettings {
   nickname?: string;
   dateOfBirth?: string;  // ISO date string
   location?: string;
+  email?: string;
 }
 
 const defaultSettings: UserSettings = {};
@@ -16,30 +17,40 @@ function createSettingsStore() {
   const { subscribe, set, update } = writable<UserSettings>(defaultSettings);
   let loaded = false;
 
+  // Helper to save current state to database
+  async function saveToDb(settings: UserSettings) {
+    if (typeof window !== 'undefined' && window.canopy?.setUserProfile) {
+      await window.canopy.setUserProfile({
+        name: settings.userName || null,
+        nickname: settings.nickname || null,
+        email: settings.email || null,
+        dateOfBirth: settings.dateOfBirth || null,
+        location: settings.location || null,
+      });
+    }
+  }
+
   return {
     subscribe,
 
     async load() {
       if (loaded) return;
-      if (typeof window === 'undefined' || !window.canopy?.getSecret) {
+      if (typeof window === 'undefined' || !window.canopy?.getUserProfile) {
         loaded = true;
         return;
       }
 
       try {
-        const [userName, nickname, dateOfBirth, location] = await Promise.all([
-          window.canopy.getSecret('user_name'),
-          window.canopy.getSecret('user_nickname'),
-          window.canopy.getSecret('user_dob'),
-          window.canopy.getSecret('user_location'),
-        ]);
-
-        set({
-          userName: userName || undefined,
-          nickname: nickname || undefined,
-          dateOfBirth: dateOfBirth || undefined,
-          location: location || undefined,
-        });
+        const profile = await window.canopy.getUserProfile();
+        if (profile) {
+          set({
+            userName: profile.name || undefined,
+            nickname: profile.nickname || undefined,
+            dateOfBirth: profile.date_of_birth || undefined,
+            location: profile.location || undefined,
+            email: profile.email || undefined,
+          });
+        }
         loaded = true;
       } catch (error) {
         console.error('Failed to load user settings:', error);
@@ -47,31 +58,48 @@ function createSettingsStore() {
     },
 
     async setUserName(name: string) {
-      if (typeof window !== 'undefined' && window.canopy?.setSecret) {
-        await window.canopy.setSecret('user_name', name);
-      }
-      update(s => ({ ...s, userName: name }));
+      update(s => {
+        const newSettings = { ...s, userName: name };
+        saveToDb(newSettings);
+        return newSettings;
+      });
     },
 
     async setNickname(nickname: string) {
-      if (typeof window !== 'undefined' && window.canopy?.setSecret) {
-        await window.canopy.setSecret('user_nickname', nickname);
-      }
-      update(s => ({ ...s, nickname }));
+      update(s => {
+        const newSettings = { ...s, nickname };
+        saveToDb(newSettings);
+        return newSettings;
+      });
     },
 
     async setDateOfBirth(dob: string) {
-      if (typeof window !== 'undefined' && window.canopy?.setSecret) {
-        await window.canopy.setSecret('user_dob', dob);
-      }
-      update(s => ({ ...s, dateOfBirth: dob }));
+      update(s => {
+        const newSettings = { ...s, dateOfBirth: dob };
+        saveToDb(newSettings);
+        return newSettings;
+      });
     },
 
     async setLocation(location: string) {
-      if (typeof window !== 'undefined' && window.canopy?.setSecret) {
-        await window.canopy.setSecret('user_location', location);
-      }
-      update(s => ({ ...s, location }));
+      update(s => {
+        const newSettings = { ...s, location };
+        saveToDb(newSettings);
+        return newSettings;
+      });
+    },
+
+    async setEmail(email: string) {
+      update(s => {
+        const newSettings = { ...s, email };
+        saveToDb(newSettings);
+        return newSettings;
+      });
+    },
+
+    async saveAll(settings: UserSettings) {
+      set(settings);
+      await saveToDb(settings);
     },
 
     get() {

@@ -3,7 +3,7 @@
 
 export interface Entity {
   id: string;
-  type: 'person' | 'project' | 'domain' | 'concept' | 'event';
+  type: 'person' | 'project' | 'domain' | 'concept' | 'event' | 'goal' | 'focus';
   name: string;
   domain: 'work' | 'family' | 'sport' | 'personal' | 'health';
   description?: string;
@@ -174,6 +174,25 @@ export interface CanopyAPI {
     memories: Memory[];
   }>;
 
+  // User Profile
+  getUserProfile: () => Promise<{
+    id: number;
+    name: string | null;
+    nickname: string | null;
+    email: string | null;
+    date_of_birth: string | null;
+    location: string | null;
+    created_at: string;
+    updated_at: string;
+  } | null>;
+  setUserProfile: (data: {
+    name?: string | null;
+    nickname?: string | null;
+    email?: string | null;
+    dateOfBirth?: string | null;
+    location?: string | null;
+  }) => Promise<{ success: boolean }>;
+
   // Secrets
   getSecret: (key: string) => Promise<string | null>;
   setSecret: (key: string, value: string) => Promise<{ success: boolean }>;
@@ -225,6 +244,18 @@ export interface CanopyAPI {
   }) => Promise<{ success: boolean }>;
   getAllPluginStates: () => Promise<PluginStateRow[]>;
 
+  // Database Management
+  resetDatabase: () => Promise<{ success: boolean; error?: string }>;
+
+  // Profile Management
+  getProfile: () => Promise<{
+    current: string;
+    profiles: { id: string; label: string; builtIn: boolean }[];
+  }>;
+  createProfile: (label: string) => Promise<{ success: boolean; profileId?: string; error?: string }>;
+  deleteProfile: (profileId: string) => Promise<{ success: boolean; error?: string }>;
+  switchProfile: (profileId: string) => Promise<{ success: boolean; profile?: string; error?: string }>;
+
   // Signals
   addSignal: (data: {
     id: string;
@@ -253,6 +284,18 @@ export interface CanopyAPI {
     limit?: number;
   }) => Promise<SignalRow[]>;
   getLatestSignal: (source: string, type?: string) => Promise<SignalRow | null>;
+
+  // URL Fetching
+  fetchUrl: (url: string) => Promise<string | null>;
+
+  // File Operations
+  saveUpload: (id: string, filename: string, data: string) => Promise<{ success: boolean; path: string }>;
+  getUploadPath: () => Promise<string>;
+  getCanopyDir: () => Promise<string>;
+
+  // App Events
+  onToggleInspector: (callback: () => void) => () => void;
+  onNavigate: (callback: (path: string) => void) => () => void;
 
   // OAuth
   oauth: {

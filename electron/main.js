@@ -17,10 +17,10 @@ const CANOPY_DIR = path.join(os.homedir(), '.canopy');
 const CONFIG_FILE = path.join(CANOPY_DIR, 'config.json');
 const SECRETS_FILE = path.join(CANOPY_DIR, 'secrets.json');
 
-// Profile management
-const PROFILES = {
-  live: { db: 'canopy.db', uploads: 'uploads', label: 'Live' },
-  test: { db: 'canopy-test.db', uploads: 'uploads-test', label: 'Test' }
+// Profile management - built-in profiles
+const BUILT_IN_PROFILES = {
+  live: { db: 'canopy.db', uploads: 'uploads', label: 'Live', builtIn: true },
+  test: { db: 'canopy-test.db', uploads: 'uploads-test', label: 'Test', builtIn: true }
 };
 
 function getConfig() {
@@ -31,7 +31,14 @@ function getConfig() {
   } catch (e) {
     console.warn('Failed to read config:', e);
   }
-  return { profile: 'live' };
+  return { profile: 'live', customProfiles: {} };
+}
+
+// Get all profiles (built-in + custom)
+function getAllProfiles() {
+  const config = getConfig();
+  const customProfiles = config.customProfiles || {};
+  return { ...BUILT_IN_PROFILES, ...customProfiles };
 }
 
 function saveConfig(config) {
@@ -44,7 +51,8 @@ function getCurrentProfile() {
 }
 
 function getProfilePaths(profileId) {
-  const profile = PROFILES[profileId] || PROFILES.live;
+  const allProfiles = getAllProfiles();
+  const profile = allProfiles[profileId] || BUILT_IN_PROFILES.live;
   return {
     db: path.join(CANOPY_DIR, profile.db),
     uploads: path.join(CANOPY_DIR, profile.uploads)
@@ -174,6 +182,18 @@ function initDatabase() {
       connected BOOLEAN DEFAULT FALSE,
       last_sync DATETIME,
       settings JSON,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- User profile (single row table)
+    CREATE TABLE IF NOT EXISTS user_profile (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      name TEXT,
+      nickname TEXT,
+      email TEXT,
+      date_of_birth TEXT,
+      location TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -665,6 +685,29 @@ ipcMain.handle('db:getAllPluginStates', () => {
   return stmt.all();
 });
 
+// ============ User Profile ============
+
+ipcMain.handle('db:getUserProfile', () => {
+  const stmt = db.prepare('SELECT * FROM user_profile WHERE id = 1');
+  return stmt.get() || null;
+});
+
+ipcMain.handle('db:setUserProfile', (event, { name, nickname, email, dateOfBirth, location }) => {
+  const stmt = db.prepare(`
+    INSERT INTO user_profile (id, name, nickname, email, date_of_birth, location, updated_at)
+    VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      nickname = excluded.nickname,
+      email = excluded.email,
+      date_of_birth = excluded.date_of_birth,
+      location = excluded.location,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  stmt.run(name || null, nickname || null, email || null, dateOfBirth || null, location || null);
+  return { success: true };
+});
+
 // ============ Uploads ============
 
 ipcMain.handle('db:createUpload', (event, { id, filename, mimeType, size, localPath, source, originalUrl, status, domain }) => {
@@ -1082,6 +1125,7 @@ ipcMain.handle('db:reset', async () => {
       DELETE FROM uploads;
       DELETE FROM artifacts;
       DELETE FROM plugin_state;
+      DELETE FROM user_profile;
     `);
 
     // Clean up uploads directory
@@ -1089,22 +1133,6 @@ ipcMain.handle('db:reset', async () => {
       const files = fs.readdirSync(UPLOADS_DIR);
       for (const file of files) {
         fs.unlinkSync(path.join(UPLOADS_DIR, file));
-      }
-    }
-
-    // Clear user profile from secrets (but keep API key)
-    if (fs.existsSync(SECRETS_FILE)) {
-      try {
-        const secrets = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf-8'));
-        // Remove user profile settings
-        delete secrets.user_name;
-        delete secrets.user_nickname;
-        delete secrets.user_dob;
-        delete secrets.user_location;
-        delete secrets.user_email;
-        fs.writeFileSync(SECRETS_FILE, JSON.stringify(secrets, null, 2), { mode: 0o600 });
-      } catch (e) {
-        console.warn('Failed to clear user profile from secrets:', e);
       }
     }
 
@@ -1119,14 +1147,88 @@ ipcMain.handle('db:reset', async () => {
 // ============ Profile Management ============
 
 ipcMain.handle('profile:get', () => {
+  const allProfiles = getAllProfiles();
   return {
     current: currentProfile,
-    profiles: Object.entries(PROFILES).map(([id, p]) => ({ id, label: p.label }))
+    profiles: Object.entries(allProfiles).map(([id, p]) => ({
+      id,
+      label: p.label,
+      builtIn: p.builtIn || false
+    }))
   };
 });
 
+ipcMain.handle('profile:create', async (event, { label }) => {
+  try {
+    // Generate unique profile ID
+    const id = `custom-${Date.now()}`;
+    const sanitizedLabel = label.replace(/[^a-zA-Z0-9\s-]/g, '').trim();
+    const dbName = `canopy-${id}.db`;
+    const uploadsName = `uploads-${id}`;
+
+    // Add to config
+    const config = getConfig();
+    if (!config.customProfiles) {
+      config.customProfiles = {};
+    }
+    config.customProfiles[id] = {
+      db: dbName,
+      uploads: uploadsName,
+      label: sanitizedLabel || `Profile ${Object.keys(config.customProfiles).length + 1}`,
+      builtIn: false
+    };
+    saveConfig(config);
+
+    console.log(`Created new profile: ${id} (${sanitizedLabel})`);
+    return { success: true, profileId: id };
+  } catch (error) {
+    console.error('Profile creation failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('profile:delete', async (event, { profileId }) => {
+  const allProfiles = getAllProfiles();
+  const profile = allProfiles[profileId];
+
+  // Cannot delete built-in profiles
+  if (!profile || profile.builtIn) {
+    return { success: false, error: 'Cannot delete this profile' };
+  }
+
+  // Cannot delete currently active profile
+  if (profileId === currentProfile) {
+    return { success: false, error: 'Cannot delete active profile. Switch to another profile first.' };
+  }
+
+  try {
+    // Delete the database file and uploads directory
+    const paths = getProfilePaths(profileId);
+    if (fs.existsSync(paths.db)) {
+      fs.unlinkSync(paths.db);
+    }
+    if (fs.existsSync(paths.uploads)) {
+      fs.rmSync(paths.uploads, { recursive: true, force: true });
+    }
+
+    // Remove from config
+    const config = getConfig();
+    if (config.customProfiles && config.customProfiles[profileId]) {
+      delete config.customProfiles[profileId];
+      saveConfig(config);
+    }
+
+    console.log(`Deleted profile: ${profileId}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Profile deletion failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('profile:switch', async (event, { profileId }) => {
-  if (!PROFILES[profileId]) {
+  const allProfiles = getAllProfiles();
+  if (!allProfiles[profileId]) {
     return { success: false, error: 'Invalid profile' };
   }
 

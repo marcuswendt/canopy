@@ -44,7 +44,11 @@ contextBridge.exposeInMainWorld('canopy', {
   getPluginState: (pluginId) => ipcRenderer.invoke('db:getPluginState', { pluginId }),
   setPluginState: (data) => ipcRenderer.invoke('db:setPluginState', data),
   getAllPluginStates: () => ipcRenderer.invoke('db:getAllPluginStates'),
-  
+
+  // ============ User Profile ============
+  getUserProfile: () => ipcRenderer.invoke('db:getUserProfile'),
+  setUserProfile: (data) => ipcRenderer.invoke('db:setUserProfile', data),
+
   // ============ Uploads ============
   createUpload: (data) => ipcRenderer.invoke('db:createUpload', data),
   updateUploadStatus: (id, status, error) => ipcRenderer.invoke('db:updateUploadStatus', { id, status, error }),
@@ -63,6 +67,15 @@ contextBridge.exposeInMainWorld('canopy', {
   saveUpload: (id, filename, data) => ipcRenderer.invoke('fs:saveUpload', { id, filename, data }),
   getUploadPath: () => ipcRenderer.invoke('fs:getUploadPath'),
   getCanopyDir: () => ipcRenderer.invoke('fs:getCanopyDir'),
+
+  // ============ Database Management ============
+  resetDatabase: () => ipcRenderer.invoke('db:reset'),
+
+  // ============ Profile Management ============
+  getProfile: () => ipcRenderer.invoke('profile:get'),
+  createProfile: (label) => ipcRenderer.invoke('profile:create', { label }),
+  deleteProfile: (profileId) => ipcRenderer.invoke('profile:delete', { profileId }),
+  switchProfile: (profileId) => ipcRenderer.invoke('profile:switch', { profileId }),
   
   // ============ Secrets ============
   getSecret: (key) => ipcRenderer.invoke('secrets:get', { key }),
@@ -116,6 +129,9 @@ contextBridge.exposeInMainWorld('canopy', {
   // ============ Weather ============
   getWeather: (location) => ipcRenderer.invoke('weather:get', { location }),
 
+  // ============ URL Fetching (for persona/web content) ============
+  fetchUrl: (url) => ipcRenderer.invoke('fetch:url', { url }),
+
   // ============ OAuth ============
   oauth: {
     start: (pluginId, config) => ipcRenderer.invoke('oauth:start', { pluginId, config }),
@@ -127,5 +143,9 @@ contextBridge.exposeInMainWorld('canopy', {
   onToggleInspector: (callback) => {
     ipcRenderer.on('toggle-inspector', callback);
     return () => ipcRenderer.removeListener('toggle-inspector', callback);
+  },
+  onNavigate: (callback) => {
+    ipcRenderer.on('navigate', (_event, path) => callback(path));
+    return () => ipcRenderer.removeAllListeners('navigate');
   },
 });
