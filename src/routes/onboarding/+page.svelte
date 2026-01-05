@@ -59,7 +59,7 @@
 
   // Collected data during onboarding (AI-driven)
   let collectedDomains = $state<string[]>([]);
-  let collectedEntities = $state<{ name: string; type: string; domain: string; description?: string; relationship?: string; priority?: string; targetDate?: string }[]>([]);
+  let collectedEntities = $state<{ name: string; type: string; domain: string; description?: string; relationship?: string; priority?: string; targetDate?: string; date?: string }[]>([]);
   let collectedUrls = $state<string[]>([]);
 
   // Existing entities from database (for duplicate detection)
@@ -506,7 +506,7 @@
             goal: 'goal',
             focus: 'focus',
           };
-          // Build description - include priority and target date for goals/focuses
+          // Build description - include metadata for different entity types
           let description = entity.description || entity.relationship || '';
           if (entity.type === 'goal' || entity.type === 'focus') {
             const parts: string[] = [];
@@ -514,6 +514,9 @@
             if (entity.targetDate) parts.push(`Target: ${entity.targetDate}`);
             if (description) parts.push(description);
             description = parts.join(' | ');
+          } else if (entity.type === 'event' && entity.date) {
+            // Include date for events (birthdays, races, etc.)
+            description = entity.date + (description ? ` | ${description}` : '');
           }
           const created = await createEntity(
             typeMap[entity.type] || 'project',
@@ -676,8 +679,66 @@
     // Clear selection for next time
     selectedIntegrations = [];
 
-    // Continue the conversation - AI will decide what to ask next
-    // (User will type their next message)
+    // Continue the conversation - AI decides what to ask next
+    await continueConversationAfterIntegration();
+  }
+
+  async function continueConversationAfterIntegration() {
+    isProcessing = true;
+
+    // Build context matching the existing pattern
+    const context: OnboardingContext = {
+      messages: messages,
+      collected: {
+        domains: collectedDomains,
+        entities: collectedEntities,
+        urls: collectedUrls,
+        integrations: connectedIntegrations,
+        userName: profileValues.name,
+        location: profileValues.location,
+      },
+      availableIntegrations: availableIntegrations.map(i => ({
+        id: i.id,
+        name: i.name,
+        description: i.description,
+      })),
+      offeredIntegrations: offeredIntegrations,
+      connectedIntegrations: connectedIntegrations,
+    };
+
+    // Get AI response
+    const response = await generateOnboardingResponse(context);
+
+    isProcessing = false;
+
+    // Add any newly extracted domains
+    if (response.extractedDomains && response.extractedDomains.length > 0) {
+      for (const domain of response.extractedDomains) {
+        if (!domainExists(domain.type)) {
+          collectedDomains = [...collectedDomains, domain.type];
+        }
+      }
+    }
+
+    // Add any newly extracted entities
+    if (response.extractedEntities) {
+      for (const entity of response.extractedEntities) {
+        if (entity.needsConfirmation) {
+          pendingConfirmations = [...pendingConfirmations, entity];
+        } else if (!collectedEntities.some(e => e.name === entity.name)) {
+          collectedEntities = [...collectedEntities, entity];
+        }
+      }
+    }
+
+    // Show AI's next question
+    addRayMessage(response.response);
+
+    // Check if onboarding is complete
+    if (response.isComplete) {
+      await new Promise(r => setTimeout(r, 600));
+      await finishOnboardingWithSummary();
+    }
   }
 
   function skipIntegrations() {
@@ -801,7 +862,11 @@
     const events = collectedEntities.filter(e => e.type === 'event');
     if (events.length > 0) {
       summary += '\n\n**Upcoming:**\n';
-      summary += events.slice(0, 5).map(e => `  └── ${e.name}`).join('\n');
+      summary += events.slice(0, 8).map(e => {
+        let line = `  └── ${e.name}`;
+        if (e.date) line += ` (${e.date})`;
+        return line;
+      }).join('\n');
     }
 
     // 6. Goals (filter by type='goal')
@@ -963,18 +1028,49 @@
         {/if}
       </div>
 
-      <!-- Pending Entity Confirmations -->
-      {#if pendingConfirmations.length > 0}
+      <!-- Pending Focus Confirmations (interpretive themes) -->
+      {#if pendingConfirmations.filter(p => p.type === 'focus').length > 0}
+        {@const pendingFocuses = pendingConfirmations.filter(p => p.type === 'focus')}
+        <div class="pending-confirmations focus-confirmations">
+          <div class="pending-header">
+            <span>I noticed these themes in what you shared:</span>
+            <div class="pending-actions">
+              <button class="text-btn" onclick={() => pendingFocuses.forEach(f => confirmPendingEntity(f))}>Yes, all correct</button>
+              <button class="text-btn muted" onclick={() => pendingFocuses.forEach(f => rejectPendingEntity(f.name))}>Not quite</button>
+            </div>
+          </div>
+          <div class="pending-list">
+            {#each pendingFocuses as entity (entity.name)}
+              <div class="pending-entity focus-entity">
+                <div class="focus-content">
+                  <span class="entity-name">{entity.name}</span>
+                  {#if entity.description}
+                    <span class="focus-description">{entity.description}</span>
+                  {/if}
+                </div>
+                <div class="entity-actions">
+                  <button class="confirm-btn" onclick={() => confirmPendingEntity(entity)} title="Yes">✓</button>
+                  <button class="reject-btn" onclick={() => rejectPendingEntity(entity.name)} title="No">✗</button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
+      <!-- Pending Organisation Confirmations -->
+      {#if pendingConfirmations.filter(p => p.type !== 'focus').length > 0}
+        {@const pendingOrgs = pendingConfirmations.filter(p => p.type !== 'focus')}
         <div class="pending-confirmations">
           <div class="pending-header">
             <span>Confirm these organisations?</span>
             <div class="pending-actions">
-              <button class="text-btn" onclick={confirmAllPending}>Add all</button>
-              <button class="text-btn muted" onclick={rejectAllPending}>Skip all</button>
+              <button class="text-btn" onclick={() => pendingOrgs.forEach(o => confirmPendingEntity(o))}>Add all</button>
+              <button class="text-btn muted" onclick={() => pendingOrgs.forEach(o => rejectPendingEntity(o.name))}>Skip all</button>
             </div>
           </div>
           <div class="pending-list">
-            {#each pendingConfirmations as entity (entity.name)}
+            {#each pendingOrgs as entity (entity.name)}
               <div class="pending-entity">
                 <span class="entity-name">{entity.name}</span>
                 <span class="entity-type">{entity.type}</span>
@@ -1836,5 +1932,44 @@
   .reject-btn:hover {
     background: var(--error-bg);
     color: var(--error);
+  }
+
+  /* Focus confirmations - interpretive themes */
+  .focus-confirmations {
+    border-color: var(--accent-muted);
+  }
+
+  .focus-confirmations .pending-header span {
+    font-style: italic;
+    color: var(--text-secondary);
+  }
+
+  .focus-entity {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-xs);
+  }
+
+  .focus-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    width: 100%;
+  }
+
+  .focus-content .entity-name {
+    font-weight: 500;
+  }
+
+  .focus-description {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+
+  .focus-entity .entity-actions {
+    align-self: flex-end;
+    margin-top: var(--space-xs);
   }
 </style>
