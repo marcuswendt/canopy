@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { rayState, needsOnboarding } from '$lib/coach/store';
-  import { RAY_VOICE, type OnboardingPhase } from '$lib/coach/ray';
+  import { RAY_VOICE, type OnboardingPhase, getPersonalGreeting } from '$lib/coach/ray';
   import { createEntity } from '$lib/db/client';
   import { loadEntities } from '$lib/stores/entities';
   import { persona, platforms, syncAllPlatforms } from '$lib/persona/store';
@@ -20,7 +20,11 @@
   import PlatformInput from '$lib/components/PlatformInput.svelte';
   import FileDropZone from '$lib/components/FileDropZone.svelte';
   import UploadedFiles from '$lib/components/UploadedFiles.svelte';
+  import VoiceInput from '$lib/components/VoiceInput.svelte';
   import Markdown from '$lib/components/Markdown.svelte';
+  import { uploads, completedUploads, type FileUpload } from '$lib/uploads';
+  import { getAvailableIntegrations } from '$lib/integrations/init';
+  import { connectPlugin, pluginStates } from '$lib/integrations/registry';
 
   let messages = $state<{ role: 'ray' | 'user'; content: string }[]>([]);
   let inputValue = $state('');
@@ -46,27 +50,62 @@
   let extractedDomains = $state<string[]>([]);
   let extractedEntities = $state<{ name: string; type: string; domain: string; description?: string; priority?: string }[]>([]);
 
+  // Integration picker state
+  let showIntegrationPicker = $state(false);
+  let selectedIntegrations = $state<string[]>([]);
+  let connectingIntegrations = $state(false);
+  const availableIntegrations = getAvailableIntegrations();
+
+  // Multi-modal input state
+  let showFileDropZone = $state(false);
+  let voiceError = $state('');
+
   onMount(async () => {
     // Guess location from system timezone
     guessedLocation = guessLocation();
-    profileLocation = guessedLocation;
 
     // Check if we're running in Electron
     isElectron = typeof window !== 'undefined' && window.canopy?.setSecret !== undefined;
 
     if (!isElectron) {
+      profileLocation = guessedLocation;
       checkingApiKey = false;
       return;
     }
+
+    // Load any previously saved profile data
+    await userSettings.load();
+    const savedSettings = userSettings.get();
+    if (savedSettings.userName) {
+      profileName = savedSettings.userName;
+    }
+    if (savedSettings.nickname) {
+      profileNickname = savedSettings.nickname;
+    }
+    if (savedSettings.dateOfBirth) {
+      profileDob = savedSettings.dateOfBirth;
+    }
+    // Use saved location or guessed location
+    profileLocation = savedSettings.location || guessedLocation;
 
     // Check if API key is already configured
     const hasKey = await hasApiKey();
     checkingApiKey = false;
 
     if (hasKey) {
-      // Skip API setup, go straight to welcome
-      currentPhase = 'welcome';
-      addRayMessage(RAY_VOICE.onboarding.welcome);
+      // If we have a saved profile, skip to domains
+      if (savedSettings.userName) {
+        currentPhase = 'domains';
+        const displayName = savedSettings.nickname || savedSettings.userName;
+        const greeting = getPersonalGreeting(displayName, savedSettings.location);
+        addRayMessage(`${greeting}\n\nWelcome back. Let's continue where we left off.`);
+        await new Promise(r => setTimeout(r, 400));
+        addRayMessage(RAY_VOICE.onboarding.askDomains);
+      } else {
+        // No saved profile, start fresh
+        currentPhase = 'welcome';
+        addRayMessage(RAY_VOICE.onboarding.welcome);
+      }
     }
     // Otherwise stay on api-setup phase
   });
@@ -104,6 +143,53 @@
     messages = [...messages, { role: 'user', content }];
   }
 
+  function handleVoiceResult(transcript: string) {
+    // Use voice transcript as input
+    inputValue = transcript;
+    handleSubmit();
+  }
+
+  function handleVoiceError(error: string) {
+    voiceError = error;
+    // Clear error after 3 seconds
+    setTimeout(() => { voiceError = ''; }, 3000);
+  }
+
+  function toggleFileDropZone() {
+    showFileDropZone = !showFileDropZone;
+  }
+
+  function handleFilesAdded(files: FileUpload[]) {
+    // Files are being processed in the background
+    // They'll appear in UploadedFiles component
+    if (files.length > 0) {
+      addRayMessage(`Got ${files.length} file${files.length > 1 ? 's' : ''}. Processing...`);
+    }
+  }
+
+  // Process completed uploads and extract context for onboarding
+  $effect(() => {
+    const completed = $completedUploads;
+    for (const upload of completed) {
+      if (upload.extracted?.entities && upload.extracted.entities.length > 0) {
+        // Add extracted entities to our list
+        for (const entity of upload.extracted.entities) {
+          const exists = extractedEntities.some(e =>
+            e.name.toLowerCase() === entity.name.toLowerCase()
+          );
+          if (!exists) {
+            extractedEntities = [...extractedEntities, {
+              name: entity.name,
+              type: entity.type,
+              domain: entity.domain || 'personal',
+              description: entity.details?.description,
+            }];
+          }
+        }
+      }
+    }
+  });
+
   async function handleSubmit() {
     if (!inputValue.trim() || isProcessing) return;
 
@@ -134,24 +220,72 @@
         extractedDomains = await aiExtractDomains(input);
 
         if (extractedDomains.length > 0) {
-          addRayMessage(RAY_VOICE.onboarding.confirmDomains(extractedDomains));
-
-          await new Promise(r => setTimeout(r, 800));
-
-          // Start with first domain details
-          if (extractedDomains.some(d => d.toLowerCase().includes('work') || d.toLowerCase().includes('field'))) {
-            currentPhase = 'work-details';
-            addRayMessage(RAY_VOICE.onboarding.askWorkDetails);
-          } else if (extractedDomains.some(d => d.toLowerCase().includes('family'))) {
-            currentPhase = 'family-details';
-            addRayMessage(RAY_VOICE.onboarding.askFamilyDetails);
-          } else {
-            currentPhase = 'review';
-            await finishOnboarding();
+          // IMPORTANT: Save domains immediately - never lose client data
+          for (const domain of extractedDomains) {
+            const type = domain.toLowerCase().includes('work') || domain.toLowerCase().includes('field') ? 'work' :
+                         domain.toLowerCase().includes('family') ? 'family' :
+                         domain.toLowerCase().includes('train') || domain.toLowerCase().includes('sport') || domain.toLowerCase().includes('racing') ? 'sport' :
+                         domain.toLowerCase().includes('health') ? 'health' :
+                         'personal';
+            rayState.addDomain({
+              id: domain.toLowerCase().replace(/\s+/g, '-'),
+              name: domain,
+              type,
+              entities: [],
+            });
           }
+
+          addRayMessage(RAY_VOICE.onboarding.confirmDomains(extractedDomains));
+          currentPhase = 'domain-highlights';
         } else {
           addRayMessage("I didn't quite catch that. What are the main areas of your life? For example: work, family, fitness...");
         }
+        break;
+
+      case 'domain-highlights':
+        // Extract any entities mentioned at a high level (people, projects, events)
+        const allEntities = await Promise.all([
+          aiExtractWorkEntities(input),
+          aiExtractFamilyEntities(input),
+          aiExtractEvents(input),
+        ]);
+        const flatEntities = allEntities.flat();
+
+        if (flatEntities.length > 0) {
+          extractedEntities = flatEntities.map(e => ({
+            name: e.name,
+            type: e.type,
+            domain: e.domain,
+            description: e.description || e.relationship,
+            priority: e.priority,
+          }));
+
+          // IMPORTANT: Save entities immediately - never lose client data
+          for (const entity of flatEntities) {
+            const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept'> = {
+              person: 'person',
+              project: 'project',
+              event: 'event',
+              company: 'project',
+              default: 'project',
+            };
+            await createEntity(
+              typeMap[entity.type] || 'project',
+              entity.name,
+              entity.domain as any,
+              entity.description || entity.relationship
+            );
+          }
+
+          const names = flatEntities.slice(0, 5).map(e => e.name).join(', ');
+          addRayMessage(`Noted: ${names}${flatEntities.length > 5 ? ` and ${flatEntities.length - 5} more` : ''}. I'll remember these.`);
+        } else {
+          addRayMessage("Got it. We can fill in the details as we go.");
+        }
+
+        await new Promise(r => setTimeout(r, 600));
+        currentPhase = 'integrations';
+        addRayMessage(RAY_VOICE.onboarding.askIntegrations);
         break;
 
       case 'work-details':
@@ -263,18 +397,24 @@
         const integrations = await aiExtractIntegrations(input);
         for (const integration of integrations) {
           rayState.markIntegrationMentioned(integration as any);
+          // Pre-select mentioned integrations
+          if (availableIntegrations.some(a => a.id === integration) && !selectedIntegrations.includes(integration)) {
+            selectedIntegrations = [...selectedIntegrations, integration];
+          }
         }
 
-        if (integrations.length > 0) {
-          addRayMessage("Perfect. If you connect those later, I can factor that data into recommendations.");
+        await new Promise(r => setTimeout(r, 400));
+
+        // Show integration picker
+        if (availableIntegrations.length > 0) {
+          showIntegrationPicker = true;
+          addRayMessage("Here are some integrations I can connect to. Pick any that would be useful, or skip if you'd rather set them up later.");
+        } else {
+          // No integrations available, move to persona
+          currentPhase = 'persona';
+          showPlatformInput = true;
+          addRayMessage(RAY_VOICE.onboarding.askPersona);
         }
-
-        await new Promise(r => setTimeout(r, 600));
-
-        // Move to persona
-        currentPhase = 'persona';
-        showPlatformInput = true;
-        addRayMessage(RAY_VOICE.onboarding.askPersona);
         break;
 
       case 'persona':
@@ -377,50 +517,13 @@
   }
 
   async function saveAndComplete() {
-    // Save all entities to database
-    for (const entity of extractedEntities) {
-      const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept'> = {
-        person: 'person',
-        project: 'project',
-        event: 'event',
-        default: 'project',
-      };
-
-      await createEntity(
-        typeMap[entity.type] || 'project',
-        entity.name,
-        entity.domain as any,
-        entity.description
-      );
-
-      // Set priority if specified
-      if (entity.priority) {
-        const level = entity.priority === 'non-negotiable' || entity.priority === 'high stakes'
-          ? 'critical'
-          : 'active';
-        // This would need entity ID, simplified for now
-      }
-    }
-
-    // Add domains to Ray state
-    for (const domain of extractedDomains) {
-      const type = domain.toLowerCase().includes('work') || domain.toLowerCase().includes('field') ? 'work' :
-                   domain.toLowerCase().includes('family') ? 'family' :
-                   domain.toLowerCase().includes('train') || domain.toLowerCase().includes('sport') || domain.toLowerCase().includes('racing') ? 'sport' :
-                   'personal';
-
-      rayState.addDomain({
-        id: domain.toLowerCase().replace(/\s+/g, '-'),
-        name: domain,
-        type,
-        entities: extractedEntities.filter(e => e.domain === type).map(e => e.name),
-      });
-    }
+    // Domains and entities are already saved incrementally during onboarding
+    // Just complete and reload
 
     // Complete onboarding
     rayState.completeOnboarding();
 
-    // Reload entities
+    // Reload entities so they appear in sidebar
     await loadEntities();
 
     addRayMessage("Perfect. I'm ready to help. What's on your mind?");
@@ -466,7 +569,10 @@
     }
 
     const displayName = profileNickname.trim() || profileName.trim();
-    addRayMessage(RAY_VOICE.onboarding.confirmProfile(displayName, profileLocation.trim()));
+    const greeting = getPersonalGreeting(displayName, profileLocation.trim());
+    const locationNote = profileLocation.trim() ? `I'll keep ${profileLocation.trim()} in mind for context.` : '';
+
+    addRayMessage(`${greeting}\n\nI'm Ray—your guide through what matters. ${locationNote}\n\nNow let's map out your life so I can actually be useful.`);
 
     await new Promise(r => setTimeout(r, 600));
 
@@ -482,13 +588,98 @@
     goto('/');
   }
 
+  function restartOnboarding() {
+    // Reset all state
+    messages = [];
+    extractedDomains = [];
+    extractedEntities = [];
+    profileName = '';
+    profileNickname = '';
+    profileDob = '';
+    profileLocation = guessedLocation;
+    showFileUpload = false;
+    showPlatformInput = false;
+    showIntegrationPicker = false;
+    selectedIntegrations = [];
+
+    // Reset Ray state (clears domains, marks onboarding incomplete)
+    rayState.reset();
+
+    // Start fresh from welcome
+    currentPhase = 'welcome';
+    addRayMessage(RAY_VOICE.onboarding.welcome);
+  }
+
+  function toggleIntegration(integrationId: string) {
+    if (selectedIntegrations.includes(integrationId)) {
+      selectedIntegrations = selectedIntegrations.filter(id => id !== integrationId);
+    } else {
+      selectedIntegrations = [...selectedIntegrations, integrationId];
+    }
+  }
+
+  async function connectSelectedIntegrations() {
+    connectingIntegrations = true;
+
+    // Try to connect each selected integration
+    for (const integrationId of selectedIntegrations) {
+      try {
+        await connectPlugin(integrationId);
+        rayState.markIntegrationMentioned(integrationId as any);
+      } catch (error) {
+        console.warn(`Failed to connect ${integrationId}:`, error);
+        // Continue with other integrations
+      }
+    }
+
+    connectingIntegrations = false;
+    showIntegrationPicker = false;
+
+    if (selectedIntegrations.length > 0) {
+      const names = selectedIntegrations.map(id =>
+        availableIntegrations.find(a => a.id === id)?.name || id
+      ).join(', ');
+      addRayMessage(`Connected: ${names}. I'll factor this data into my suggestions.`);
+    }
+
+    await new Promise(r => setTimeout(r, 600));
+
+    // Move to persona
+    currentPhase = 'persona';
+    showPlatformInput = true;
+    addRayMessage(RAY_VOICE.onboarding.askPersona);
+  }
+
+  function skipIntegrations() {
+    showIntegrationPicker = false;
+
+    // Move to persona
+    currentPhase = 'persona';
+    showPlatformInput = true;
+    addRayMessage("No problem, you can always connect these later in Settings.");
+    setTimeout(() => {
+      addRayMessage(RAY_VOICE.onboarding.askPersona);
+    }, 600);
+  }
+
 </script>
 
-<div class="onboarding-container">
+<div class="onboarding-container" id="onboarding">
   <div class="onboarding-content">
-    <!-- Logo -->
-    <div class="logo">
-      <span class="logo-icon">🌿</span>
+    <!-- Header with logo and restart -->
+    <div class="onboarding-header">
+      <div class="logo">
+        <span class="logo-icon">🌿</span>
+      </div>
+      {#if currentPhase !== 'api-setup' && messages.length > 0}
+        <button
+          class="restart-btn"
+          onclick={restartOnboarding}
+          title="Restart onboarding"
+        >
+          ↻
+        </button>
+      {/if}
     </div>
 
     <!-- API Key Setup Phase -->
@@ -643,18 +834,115 @@
             </button>
           </div>
         </div>
+      {:else if showIntegrationPicker}
+        <div class="integration-picker">
+          <div class="integration-cards">
+            {#each availableIntegrations as integration (integration.id)}
+              <button
+                class="integration-card"
+                class:selected={selectedIntegrations.includes(integration.id)}
+                onclick={() => toggleIntegration(integration.id)}
+                disabled={connectingIntegrations}
+              >
+                <span class="integration-icon">{integration.icon}</span>
+                <span class="integration-name">{integration.name}</span>
+                <span class="integration-desc">{integration.description}</span>
+                {#if selectedIntegrations.includes(integration.id)}
+                  <span class="check-mark">✓</span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+
+          <div class="integration-actions">
+            <button
+              class="primary-btn"
+              onclick={connectSelectedIntegrations}
+              disabled={connectingIntegrations}
+            >
+              {#if connectingIntegrations}
+                Connecting...
+              {:else if selectedIntegrations.length > 0}
+                Connect {selectedIntegrations.length} integration{selectedIntegrations.length > 1 ? 's' : ''}
+              {:else}
+                Skip for now
+              {/if}
+            </button>
+            {#if selectedIntegrations.length > 0}
+              <button
+                class="secondary-btn"
+                onclick={skipIntegrations}
+                disabled={connectingIntegrations}
+              >
+                Skip
+              </button>
+            {/if}
+          </div>
+
+          <p class="privacy-note">
+            Data from integrations stays on your device and helps Ray understand your context better.
+          </p>
+        </div>
       {:else if currentPhase !== 'review' || messages[messages.length - 1]?.content.includes('ready to help')}
-        <div class="input-area">
-          <input
-            type="text"
-            placeholder="Type your response..."
-            bind:value={inputValue}
-            onkeydown={handleKeydown}
-            disabled={isProcessing}
-          />
-          <button onclick={handleSubmit} disabled={!inputValue.trim() || isProcessing}>
-            →
-          </button>
+        <!-- Multi-modal input area -->
+        <div class="multimodal-input">
+          {#if showFileDropZone}
+            <div class="file-upload-area">
+              <FileDropZone
+                acceptedTypes={['image/*', 'application/pdf', '.doc', '.docx', '.txt']}
+                maxFiles={10}
+                onfilesAdded={handleFilesAdded}
+              />
+              <button class="close-upload-btn" onclick={toggleFileDropZone}>
+                Done
+              </button>
+            </div>
+          {/if}
+
+          <UploadedFiles showSuggestions={true} />
+
+          {#if voiceError}
+            <div class="voice-error">{voiceError}</div>
+          {/if}
+
+          <div class="input-area">
+            <button
+              class="input-action-btn"
+              onclick={toggleFileDropZone}
+              title="Add files or images"
+              disabled={isProcessing}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+              </svg>
+            </button>
+
+            <input
+              type="text"
+              placeholder="Type, speak, or drop files..."
+              bind:value={inputValue}
+              onkeydown={handleKeydown}
+              disabled={isProcessing}
+            />
+
+            <VoiceInput
+              disabled={isProcessing}
+              onresult={handleVoiceResult}
+              onerror={handleVoiceError}
+            />
+
+            <button
+              class="submit-btn"
+              onclick={handleSubmit}
+              disabled={!inputValue.trim() || isProcessing}
+            >
+              →
+            </button>
+          </div>
+
+          <p class="input-hint">
+            You can type, use voice, or drop photos and documents
+          </p>
         </div>
       {:else if currentPhase === 'persona'}
         <div class="persona-input-area">
@@ -703,6 +991,7 @@
   .onboarding-content {
     width: 100%;
     max-width: 500px;
+    max-height: calc(100vh - 2 * var(--space-xl));
     display: flex;
     flex-direction: column;
     gap: var(--space-lg);
@@ -711,12 +1000,47 @@
     border-radius: var(--radius-lg);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
     animation: slideUp 0.5s ease-out forwards;
+    overflow-y: auto;
+  }
+
+  .onboarding-header {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    margin-bottom: var(--space-md);
   }
 
   .logo {
     text-align: center;
     font-size: 48px;
-    margin-bottom: var(--space-md);
+  }
+
+  .restart-btn {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    border-radius: var(--radius-full);
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+    opacity: 0;
+    animation: fadeIn 0.3s ease-out 0.5s forwards;
+  }
+
+  .restart-btn:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    transform: translateY(-50%) rotate(180deg);
   }
 
   /* API Setup Styles */
@@ -732,12 +1056,17 @@
     font-size: 24px;
     font-weight: 600;
     color: var(--text-primary);
+    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    opacity: 0;
   }
 
   .api-description {
     color: var(--text-secondary);
     line-height: 1.6;
     margin: 0;
+    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    animation-delay: 0.05s;
+    opacity: 0;
   }
 
   .api-input-group {
@@ -745,6 +1074,9 @@
     flex-direction: column;
     gap: var(--space-sm);
     text-align: left;
+    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    animation-delay: 0.1s;
+    opacity: 0;
   }
 
   .api-input-group label {
@@ -777,12 +1109,18 @@
   .api-actions {
     display: flex;
     justify-content: center;
+    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    animation-delay: 0.15s;
+    opacity: 0;
   }
 
   .api-help {
     font-size: 13px;
     color: var(--text-muted);
     margin: 0;
+    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    animation-delay: 0.2s;
+    opacity: 0;
   }
 
   .api-help a {
@@ -799,6 +1137,9 @@
     padding: var(--space-lg);
     border-radius: var(--radius-md);
     text-align: center;
+    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    animation-delay: 0.1s;
+    opacity: 0;
   }
 
   .electron-instructions p {
@@ -828,10 +1169,25 @@
   .message {
     display: flex;
     gap: var(--space-sm);
+    animation: messageIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    opacity: 0;
+    transform-origin: left bottom;
   }
 
   .message.user {
     justify-content: flex-end;
+    transform-origin: right bottom;
+  }
+
+  @keyframes messageIn {
+    0% {
+      opacity: 0;
+      transform: scale(0.92) translateY(8px);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
   }
 
   .message.user .message-content {
@@ -871,6 +1227,12 @@
     gap: 4px;
     padding: var(--space-md);
     justify-content: center;
+    animation: fadeIn 0.2s ease-out forwards;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 
   .typing span {
@@ -889,6 +1251,9 @@
     flex-direction: column;
     gap: var(--space-sm);
     align-items: center;
+    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    animation-delay: 0.1s;
+    opacity: 0;
   }
 
   .primary-btn {
@@ -931,6 +1296,9 @@
   .input-area {
     display: flex;
     gap: var(--space-sm);
+    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    animation-delay: 0.1s;
+    opacity: 0;
   }
 
   .input-area input {
@@ -989,6 +1357,77 @@
     border-radius: var(--radius-md);
   }
 
+  /* Integration Picker */
+  .integration-picker {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+  }
+
+  .integration-cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .integration-card {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-lg);
+    background: var(--bg-secondary);
+    border: 2px solid transparent;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+    position: relative;
+  }
+
+  .integration-card:hover:not(:disabled) {
+    background: var(--bg-tertiary);
+    border-color: var(--accent-muted);
+  }
+
+  .integration-card.selected {
+    background: var(--accent-muted);
+    border-color: var(--accent);
+  }
+
+  .integration-card:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .integration-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+  }
+
+  .integration-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    flex-shrink: 0;
+  }
+
+  .integration-desc {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    flex: 1;
+  }
+
+  .check-mark {
+    color: var(--accent);
+    font-weight: bold;
+    font-size: 1.2rem;
+  }
+
+  .integration-actions {
+    display: flex;
+    gap: var(--space-sm);
+    justify-content: center;
+  }
+
   @keyframes slideUp {
     from {
       opacity: 0;
@@ -1016,6 +1455,24 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-xs);
+    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    opacity: 0;
+  }
+
+  .profile-field:nth-child(1) { animation-delay: 0.05s; }
+  .profile-field:nth-child(2) { animation-delay: 0.1s; }
+  .profile-field:nth-child(3) { animation-delay: 0.15s; }
+  .profile-field:nth-child(4) { animation-delay: 0.2s; }
+
+  @keyframes fieldIn {
+    0% {
+      opacity: 0;
+      transform: translateY(12px) scale(0.96);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
   }
 
   .profile-field label {
@@ -1062,5 +1519,102 @@
     display: flex;
     justify-content: center;
     margin-top: var(--space-sm);
+    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    animation-delay: 0.25s;
+    opacity: 0;
+  }
+
+  /* Multi-modal input styles */
+  .multimodal-input {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    animation: fieldIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    animation-delay: 0.1s;
+    opacity: 0;
+    position: relative;
+  }
+
+  .file-upload-area {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+  }
+
+  .close-upload-btn {
+    align-self: flex-end;
+    padding: var(--space-xs) var(--space-md);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .close-upload-btn:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+  }
+
+  .voice-error {
+    padding: var(--space-sm) var(--space-md);
+    background: rgba(220, 38, 38, 0.1);
+    border: 1px solid rgba(220, 38, 38, 0.3);
+    border-radius: var(--radius-md);
+    color: #dc2626;
+    font-size: 13px;
+    text-align: center;
+  }
+
+  .input-action-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+  }
+
+  .input-action-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-muted);
+  }
+
+  .input-action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .submit-btn {
+    width: 48px;
+    height: 48px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: var(--radius-lg);
+    font-size: 20px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .submit-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .input-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+    margin: 0;
   }
 </style>
