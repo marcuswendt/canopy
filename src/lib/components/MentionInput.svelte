@@ -32,6 +32,22 @@
   // Track confirmed mentions
   let confirmedMentions = $state<Map<string, Entity>>(new Map());
 
+  // Auto-grow textarea to fit content
+  function autoGrow() {
+    if (!textareaEl) return;
+    // Reset height to auto to get the correct scrollHeight
+    textareaEl.style.height = 'auto';
+    // Set to scrollHeight, but cap at max-height (handled by CSS)
+    textareaEl.style.height = `${textareaEl.scrollHeight}px`;
+  }
+
+  // Trigger auto-grow when value changes
+  $effect(() => {
+    value; // dependency
+    // Use requestAnimationFrame to ensure DOM has updated
+    requestAnimationFrame(autoGrow);
+  });
+
   // Filter entities based on search
   let filteredEntities = $derived(
     triggerType === '@'
@@ -206,6 +222,10 @@
     value = '';
     confirmedMentions.clear();
     confirmedMentions = confirmedMentions;
+    // Reset textarea height
+    if (textareaEl) {
+      textareaEl.style.height = 'auto';
+    }
   }
 </script>
 
@@ -284,8 +304,11 @@
     color: var(--text-primary);
     resize: none;
     padding: var(--space-sm);
-    line-height: 1.4;
+    line-height: 1.5;
     font-family: inherit;
+    min-height: 24px;
+    max-height: 200px;
+    overflow-y: auto;
   }
 
   textarea::placeholder {
