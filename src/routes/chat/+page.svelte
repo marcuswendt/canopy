@@ -12,12 +12,16 @@
     extractEntitiesFromText,
     detectDomains,
     updateEntityMention,
-    recordCoOccurrence
+    recordCoOccurrence,
+    createMemory,
+    getMemories
   } from '$lib/db/client';
-  import { generateChatResponse } from '$lib/ai/extraction';
+  import { generateChatResponse, getReferencesForQuery } from '$lib/ai/extraction';
+  import { extractMemories, matchEntitiesToFact, selectRelevantMemories } from '$lib/ai/memory';
   import { hasApiKey, getFallbackMessage } from '$lib/ai';
   import { buildChatContext, estimateMessageTokens } from '$lib/ai/context';
-  import type { Entity, Message, Thread } from '$lib/db/types';
+  import type { Entity, Message, Thread, Memory } from '$lib/db/types';
+  import type { ReferenceContext } from '$lib/reference/types';
   import DomainBadge from '$lib/components/DomainBadge.svelte';
   import MentionInput from '$lib/components/MentionInput.svelte';
   import ArtifactPanel from '$lib/components/ArtifactPanel.svelte';
@@ -170,14 +174,41 @@
       }
     }
 
+    // Fetch relevant memories for context
+    let relevantMemories: Memory[] = [];
+    try {
+      const allMemories = await getMemories(50);
+      relevantMemories = selectRelevantMemories(
+        allMemories,
+        content,
+        mentionedEntities.map(e => e.id),
+        5
+      );
+    } catch (err) {
+      console.warn('Failed to fetch memories:', err);
+    }
+
+    // Search reference sources (Notion, Apple Notes) when relevant
+    let referenceContext: ReferenceContext | undefined;
+    try {
+      referenceContext = await getReferencesForQuery(content, contextResult.entities);
+    } catch (err) {
+      console.warn('Failed to search references:', err);
+    }
+
+    // Capture the user message for memory extraction
+    const userMessageContent = content;
+
     activeStream = generateChatResponse(
       content,
       {
         entities: contextResult.entities,
+        memories: relevantMemories,
         threadHistory: contextResult.messages,
         userName: settings.userName,
         location: settings.location,
         weather: weatherContext,
+        referenceContext,
       },
       {
         onDelta: (delta) => {
@@ -191,6 +222,9 @@
           const assistantMessage = await addMessage(threadId!, 'assistant', finalContent, []);
           if (assistantMessage) messages = [...messages, assistantMessage];
           isLoading = false;
+
+          // Extract and store memories from this exchange (background, non-blocking)
+          extractAndStoreMemories(userMessageContent, finalContent, $entities, threadId!);
         },
         onError: async (error) => {
           console.error('Chat error:', error);
@@ -204,6 +238,41 @@
         }
       }
     );
+  }
+
+  /**
+   * Extract memorable facts from a conversation exchange and store them
+   * Runs in background to not block the UI
+   */
+  async function extractAndStoreMemories(
+    userMessage: string,
+    assistantResponse: string,
+    allEntities: Entity[],
+    sourceThreadId: string
+  ) {
+    try {
+      const facts = await extractMemories(userMessage, assistantResponse, allEntities);
+
+      if (facts.length === 0) return;
+
+      // Store each extracted fact as a memory
+      for (const fact of facts) {
+        const entityIds = matchEntitiesToFact(fact, allEntities);
+        const importance = { high: 0.9, medium: 0.6, low: 0.3 }[fact.importance];
+
+        await createMemory(
+          fact.content,
+          'thread',
+          sourceThreadId,
+          entityIds,
+          importance
+        );
+      }
+
+      console.log(`Extracted ${facts.length} memories from conversation`);
+    } catch (err) {
+      console.warn('Memory extraction failed:', err);
+    }
   }
 
   onDestroy(() => {

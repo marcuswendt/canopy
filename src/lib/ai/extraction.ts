@@ -2,10 +2,12 @@
 // Uses the AI provider abstraction to extract structured data from user input
 
 import { extract, stream, isError, type AIMessage, type StreamCallbacks } from './index';
-import type { Entity } from '$lib/db/types';
+import type { Entity, Memory } from '$lib/db/types';
 import type { ExtractedContent, EntitySuggestion } from '$lib/uploads';
 import { get } from 'svelte/store';
 import { recentTime, recentWeather, recentRecovery } from '$lib/integrations/registry';
+import { gatherReferenceContext, formatContextForPrompt, type ReferenceContext } from '$lib/reference/registry';
+import { formatMemoriesForContext } from './memory';
 
 // =============================================================================
 // SCHEMAS
@@ -372,12 +374,13 @@ export function generateChatResponse(
   query: string,
   context: {
     entities: Entity[];
-    memories?: string[];
+    memories?: Memory[] | string[];
     threadHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
     location?: string;
     userName?: string;
     weather?: string; // Formatted weather string e.g. "24°C, partly cloudy"
     usePluginContext?: boolean; // Use plugin signals for time/weather/capacity
+    referenceContext?: ReferenceContext; // Search results from reference plugins
   },
   callbacks: StreamCallbacks
 ): { streamId: string; cancel: () => void } {
@@ -419,10 +422,22 @@ export function generateChatResponse(
     }
   }
 
+  // Format memories - handle both Memory objects and strings
   if (context.memories && context.memories.length > 0) {
     contextSection += '\nRelevant memories:\n';
-    for (const memory of context.memories.slice(0, 5)) {
+    const memoryStrings = typeof context.memories[0] === 'string'
+      ? context.memories as string[]
+      : formatMemoriesForContext(context.memories as Memory[]);
+    for (const memory of memoryStrings.slice(0, 5)) {
       contextSection += `- ${memory}\n`;
+    }
+  }
+
+  // Add reference context from external sources (Notion, Apple Notes, etc.)
+  if (context.referenceContext) {
+    const refPrompt = formatContextForPrompt(context.referenceContext);
+    if (refPrompt) {
+      contextSection += refPrompt;
     }
   }
 
@@ -436,6 +451,19 @@ export function generateChatResponse(
     maxTokens: 1024,
     temperature: 0.7,
   });
+}
+
+/**
+ * Gather reference context for a user message
+ * Searches connected reference plugins (Notion, Apple Notes) for relevant content
+ */
+export async function getReferencesForQuery(
+  query: string,
+  entities: Entity[]
+): Promise<ReferenceContext> {
+  const entityNames = entities.map(e => e.name);
+  const entityTypes = entities.map(e => e.type);
+  return gatherReferenceContext(query, entityNames, entityTypes);
 }
 
 // =============================================================================
