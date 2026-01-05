@@ -24,6 +24,7 @@
   import Markdown from '$lib/components/Markdown.svelte';
   import { loadArtifacts } from '$lib/stores/artifacts';
   import { userSettings } from '$lib/stores/settings';
+  import { weather } from '$lib/stores/weather';
 
   let inputValue = $state('');
   let messages = $state<Message[]>([]);
@@ -159,6 +160,16 @@
     // Start streaming response
     streamingContent = '';
     const settings = userSettings.get();
+
+    // Fetch weather if location is set
+    let weatherContext: string | undefined;
+    if (settings.location) {
+      const weatherData = await weather.fetch(settings.location);
+      if (weatherData) {
+        weatherContext = weather.formatForContext(weatherData);
+      }
+    }
+
     activeStream = generateChatResponse(
       content,
       {
@@ -166,6 +177,7 @@
         threadHistory: contextResult.messages,
         userName: settings.userName,
         location: settings.location,
+        weather: weatherContext,
       },
       {
         onDelta: (delta) => {

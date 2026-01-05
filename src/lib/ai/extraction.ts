@@ -302,6 +302,7 @@ export function generateChatResponse(
     threadHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
     location?: string;
     userName?: string;
+    weather?: string; // Formatted weather string e.g. "24°C, partly cloudy"
   },
   callbacks: StreamCallbacks
 ): { streamId: string; cancel: () => void } {
@@ -311,6 +312,10 @@ export function generateChatResponse(
 
   if (context.location) {
     contextSection += `Location: ${context.location}\n`;
+  }
+
+  if (context.weather) {
+    contextSection += `Weather: ${context.weather}\n`;
   }
 
   if (context.entities.length > 0) {
