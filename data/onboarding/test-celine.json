@@ -1,0 +1,71 @@
+{
+  "name": "Celine Wendt",
+  "description": "Comprehensive onboarding document - tests two-stage extraction",
+
+  "document": "Family is my number one!\n\nMy husband is Marcus that runs his own company so he is very busy with income for the family and making sure the business is running well.\n\nI do help out a little but not as much as I use to when I was fully employed by his company. I still need to do some admin financial work which takes 1 day per month. But I often also get asked to do little bits in the week eg pay invoice, raise invoice, etc.\n\nI have three energetic boys that need a lot of attention and I want to become a better mother and stay more in control. They are my all and everything, as well as my husband and I am so incredible proud and happy. But I feel I do need to work on structure and control of my life.\n\nI have also had a big heartache that I am finding very difficult to let go that I have never had the chance to have a little girl. I still have a little hope but this maybe very unlikely due to age and my husband thinks we have too much too handle already .. but I feel I would feel so much relief.. not sure why.. and its something that I really hope will happen one day which I am still working on.\n\nThat is why I am also very keen to focus on my fitness this year. I need to lose weight.. I have put on a lot of weight and especially around the belly. Please know I am also 42 and if I am not pregnant at 43 again this will prob not happen.\n\nI need to lose weight and gain chances in having another baby girl. But also find structure and control into my life with all my boys/men in my life.\n\nMy children are Rafael 5 years (born 02/02/2020), Luca 3 years (born 01/05/2022), Elio 9months (born 30/03/2025)\n\nAfter my holiday my key focus are my children and their education, my husband and supporting him in a healthy work/life balance and his passion for cycling, and my fitness and hoping to maybe have a little healthy girl via IVF if life will let me.\n\nWe are also renovating our house which is also one of the big projects for me this year to have finished over the summer. The build has started already and we are refining the kitchen design.",
+
+  "expected": {
+    "summary_contains": ["mother", "family", "fitness", "children"],
+
+    "domains": [
+      { "type": "family", "required": true },
+      { "type": "health", "required": true, "notes": "Fitness, weight loss, fertility" },
+      { "type": "work", "required": false, "notes": "Part-time admin work for husband's company" }
+    ],
+
+    "entities": {
+      "people": [
+        { "name": "Marcus", "relationship": "husband", "domain": "family", "required": true },
+        { "name": "Rafael", "relationship": "son", "domain": "family", "dob": "2020-02-02", "required": true },
+        { "name": "Luca", "relationship": "son", "domain": "family", "dob": "2022-05-01", "required": true },
+        { "name": "Elio", "relationship": "son", "domain": "family", "dob": "2025-03-30", "required": true }
+      ],
+
+      "events": [
+        { "name": "Rafael's Birthday", "type": "birthday", "date": "02/02", "domain": "family" },
+        { "name": "Luca's Birthday", "type": "birthday", "date": "01/05", "domain": "family" },
+        { "name": "Elio's Birthday", "type": "birthday", "date": "30/03", "domain": "family" },
+        { "name": "House Renovation", "type": "project", "date": "summer 2026", "domain": "family" }
+      ],
+
+      "goals": [
+        { "name": "Lose Weight", "domain": "health", "priority": "critical", "required": true },
+        { "name": "Have Baby Girl", "domain": "health", "priority": "critical", "notes": "IVF mentioned" },
+        { "name": "Better Structure/Control", "domain": "personal", "priority": "active" }
+      ],
+
+      "focuses": [
+        {
+          "name": "Body & Fertility",
+          "domain": "health",
+          "needsConfirmation": true,
+          "notes": "Weight loss tied to fertility hopes - deeply emotional"
+        },
+        {
+          "name": "Structure & Control",
+          "domain": "personal",
+          "needsConfirmation": true,
+          "notes": "Managing life with three boys"
+        }
+      ],
+
+      "projects": [
+        { "name": "Kitchen Renovation", "domain": "family", "date": "summer" }
+      ]
+    },
+
+    "anti_hallucination_checks": [
+      { "should_not_exist": "Company name for Marcus's business (not specified)" },
+      { "should_not_exist": "Specific weight numbers (not mentioned)" },
+      { "should_not_exist": "IVF clinic name (not mentioned)" },
+      { "should_not_exist": "House address (not mentioned)" }
+    ],
+
+    "topics_not_covered": [
+      "Specific fitness activities/sports",
+      "Work details beyond admin tasks",
+      "Social life/friends",
+      "Location/where they live"
+    ]
+  }
+}

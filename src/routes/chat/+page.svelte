@@ -16,9 +16,20 @@
     createMemory,
     getMemories
   } from '$lib/db/client';
-  import { generateChatResponse, getReferencesForQuery } from '$lib/ai/extraction';
-  import { extractMemories, matchEntitiesToFact, selectRelevantMemories, filterDuplicateFacts } from '$lib/ai/memory';
+  import { generateChatResponse, getReferencesForQuery, extractChatSuggestions } from '$lib/ai/extraction';
+  import { selectRelevantMemories } from '$lib/ai/memory';
   import { hasApiKey, getFallbackMessage } from '$lib/ai';
+  import {
+    suggestionsByMessage,
+    addSuggestion,
+    confirmSuggestion,
+    rejectSuggestion,
+    confirmAllForMessage,
+    rejectAllForMessage,
+    startCleanupInterval,
+    stopCleanupInterval
+  } from '$lib/stores/suggestions';
+  import SuggestionBar from '$lib/components/SuggestionBar.svelte';
   import { buildChatContext, estimateMessageTokens } from '$lib/ai/context';
   import type { Entity, Message, Thread, Memory } from '$lib/db/types';
   import type { ReferenceContext } from '$lib/reference/types';
@@ -63,6 +74,9 @@
   let summaryUpToIndex = $state(0);
 
   onMount(async () => {
+    // Start suggestion cleanup interval (Bonsai system)
+    startCleanupInterval();
+
     // Load artifacts and user settings
     loadArtifacts();
     userSettings.load();
@@ -225,8 +239,13 @@
           if (assistantMessage) messages = [...messages, assistantMessage];
           isLoading = false;
 
-          // Extract and store memories from this exchange (background, non-blocking)
-          extractAndStoreMemories(userMessageContent, finalContent, $entities, threadId!);
+          // Extract suggestions for Bonsai confirmation (non-blocking)
+          extractAndCreateSuggestions(
+            userMessageContent,
+            finalContent,
+            assistantMessage?.id || '',
+            threadId!
+          );
         },
         onError: async (error) => {
           console.error('Chat error:', error);
@@ -243,46 +262,65 @@
   }
 
   /**
-   * Extract memorable facts from a conversation exchange and store them
+   * Extract entity and memory suggestions for Bonsai confirmation
    * Runs in background to not block the UI
    */
-  async function extractAndStoreMemories(
+  async function extractAndCreateSuggestions(
     userMessage: string,
     assistantResponse: string,
-    allEntities: Entity[],
+    messageId: string,
     sourceThreadId: string
   ) {
     try {
-      // Fetch existing memories to avoid duplicates
+      // Fetch existing data to avoid duplicates
       const existingMemories = await getMemories(50);
 
-      // Extract facts, passing existing context
-      let facts = await extractMemories(userMessage, assistantResponse, allEntities, existingMemories);
+      // Extract suggestions using the combined extraction
+      const suggestions = await extractChatSuggestions(
+        userMessage,
+        assistantResponse,
+        $entities,
+        existingMemories
+      );
 
-      if (facts.length === 0) return;
-
-      // Additional safety: filter out any duplicates that slipped through
-      facts = filterDuplicateFacts(facts, existingMemories);
-
-      if (facts.length === 0) return;
-
-      // Store each extracted fact as a memory
-      for (const fact of facts) {
-        const entityIds = matchEntitiesToFact(fact, allEntities);
-        const importance = { high: 0.9, medium: 0.6, low: 0.3 }[fact.importance];
-
-        await createMemory(
-          fact.content,
-          'thread',
-          sourceThreadId,
-          entityIds,
-          importance
-        );
+      // Add entity suggestions
+      for (const entity of suggestions.entities) {
+        addSuggestion({
+          type: 'entity',
+          messageId,
+          threadId: sourceThreadId,
+          entity: {
+            name: entity.name,
+            type: entity.type,
+            domain: entity.domain,
+            description: entity.description,
+            relationship: entity.relationship,
+            confidence: entity.confidence,
+          },
+        });
       }
 
-      console.log(`Extracted ${facts.length} memories from conversation`);
+      // Add memory suggestions
+      for (const memory of suggestions.memories) {
+        addSuggestion({
+          type: 'memory',
+          messageId,
+          threadId: sourceThreadId,
+          memory: {
+            content: memory.content,
+            importance: memory.importance,
+            category: memory.category,
+            entityNames: memory.entityNames,
+          },
+        });
+      }
+
+      const total = suggestions.entities.length + suggestions.memories.length;
+      if (total > 0) {
+        console.log(`Created ${total} suggestions for Bonsai confirmation`);
+      }
     } catch (err) {
-      console.warn('Memory extraction failed:', err);
+      console.warn('Suggestion extraction failed:', err);
     }
   }
 
@@ -347,9 +385,12 @@
   }
 
   onDestroy(() => {
+    // Clean up active stream
     if (activeStream) {
       activeStream.cancel();
     }
+    // Stop suggestion cleanup interval
+    stopCleanupInterval();
   });
 </script>
 
@@ -367,7 +408,7 @@
   <div class="chat-body">
     <div class="messages-area">
       <div class="messages" bind:this={messagesContainer}>
-        {#each messages as message}
+        {#each messages as message (message.id)}
           <div class="message {message.role}">
             {#if message.role === 'user'}
               <div class="message-bubble">{message.content}</div>
@@ -377,6 +418,19 @@
               </div>
             {/if}
           </div>
+
+          {#if message.role === 'assistant'}
+            {@const msgSuggestions = $suggestionsByMessage.get(message.id) || []}
+            {#if msgSuggestions.length > 0}
+              <SuggestionBar
+                suggestions={msgSuggestions}
+                onconfirm={confirmSuggestion}
+                onreject={rejectSuggestion}
+                onconfirmall={() => confirmAllForMessage(message.id)}
+                onrejectall={() => rejectAllForMessage(message.id)}
+              />
+            {/if}
+          {/if}
         {/each}
 
         {#if streamingContent}

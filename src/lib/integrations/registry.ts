@@ -126,7 +126,7 @@ export const pluginStates = registry.states;
 export const integrationSignals = registry.signals;
 export const syncEvents = registry.events;
 
-// Recent signals by type
+// Recent signals by type (wellness data from any provider)
 export const recentRecovery = derived(
   registry.signals,
   ($signals) => $signals.find(s => s.type === 'recovery')
@@ -146,6 +146,33 @@ export const todayStrain = derived(
       s.type === 'strain' &&
       s.timestamp >= today
     );
+  }
+);
+
+// Wellness signals (from any wellness provider: whoop, oura, apple_health)
+const WELLNESS_SOURCES = ['whoop', 'oura', 'apple_health'];
+
+export const wellnessRecovery = derived(
+  registry.signals,
+  ($signals) => $signals.find(s =>
+    s.type === 'recovery' && WELLNESS_SOURCES.includes(s.source)
+  )
+);
+
+export const wellnessSleep = derived(
+  registry.signals,
+  ($signals) => $signals.find(s =>
+    s.type === 'sleep' && WELLNESS_SOURCES.includes(s.source)
+  )
+);
+
+export const wellnessCapacity = derived(
+  registry.signals,
+  ($signals) => {
+    const recovery = $signals.find(s =>
+      s.type === 'recovery' && WELLNESS_SOURCES.includes(s.source)
+    );
+    return recovery?.capacityImpact ?? null;
   }
 );
 

@@ -7,7 +7,7 @@
 
 export interface IntegrationSignal {
   id: string;
-  source: string;           // 'whoop', 'strava', 'basecamp', 'gmail'
+  source: string;           // 'wellness', 'whoop', 'oura', 'apple_health', 'strava', 'basecamp', 'google'
   type: SignalType;
   timestamp: Date;
   

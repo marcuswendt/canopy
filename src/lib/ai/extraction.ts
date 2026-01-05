@@ -674,6 +674,156 @@ export function generateChatResponse(
   });
 }
 
+// =============================================================================
+// BONSAI SUGGESTION EXTRACTION
+// =============================================================================
+
+/**
+ * Schema for extracting entities and memories from a chat exchange
+ * Used for the Bonsai confirmation system
+ */
+const CHAT_SUGGESTION_SCHEMA = {
+  type: 'object',
+  properties: {
+    entities: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Name of the person, project, company, etc.' },
+          type: { type: 'string', enum: ['person', 'project', 'company', 'event', 'goal', 'focus'] },
+          domain: { type: 'string', enum: ['work', 'family', 'sport', 'personal', 'health'] },
+          description: { type: 'string', description: 'Brief description or context' },
+          relationship: { type: 'string', description: 'For people: their role or relationship (e.g., "Nike" for someone at Nike)' },
+          confidence: { type: 'number', minimum: 0, maximum: 1 },
+        },
+        required: ['name', 'type', 'domain', 'confidence'],
+      },
+    },
+    memories: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          content: { type: 'string', description: 'The memorable fact, written as a statement' },
+          importance: { type: 'string', enum: ['high', 'medium', 'low'] },
+          category: { type: 'string', enum: ['preference', 'fact', 'event', 'decision', 'insight'] },
+          entityNames: { type: 'array', items: { type: 'string' }, description: 'Names of entities mentioned' },
+        },
+        required: ['content', 'importance', 'category', 'entityNames'],
+      },
+    },
+  },
+  required: ['entities', 'memories'],
+};
+
+const CHAT_SUGGESTION_PROMPT = `Analyze this conversation exchange and extract NEW entities and memorable facts.
+
+## ENTITIES TO EXTRACT
+People, projects, companies, events, goals mentioned that the user might want to track.
+
+ONLY extract entities that are:
+- Explicitly named in the user's message
+- Not already known (check the existing entities list)
+- Specific enough to be useful (not generic terms)
+
+For people, include their relationship/context (e.g., "colleague at Nike", "wife").
+
+## MEMORIES TO EXTRACT
+Facts about the user worth remembering for future conversations:
+- Preferences (how they like to work, communicate)
+- Personal facts (family, important dates)
+- Decisions made
+- Events or deadlines mentioned
+- Insights or patterns they've noticed
+
+CRITICAL - DO NOT EXTRACT:
+- Information already in the "existing entities" or "existing memories" lists
+- Generic statements or pleasantries
+- Things the assistant said (only extract what the USER reveals)
+- Duplicate or near-duplicate information
+
+Set confidence based on how clearly the entity/fact was mentioned:
+- 0.9-1.0: Explicitly named with details
+- 0.7-0.8: Clearly mentioned but less context
+- 0.5-0.6: Inferred from context (lower priority)
+
+Return empty arrays if there's nothing new worth extracting.`;
+
+export interface ChatSuggestionResult {
+  entities: Array<{
+    name: string;
+    type: Entity['type'];
+    domain: Entity['domain'];
+    description?: string;
+    relationship?: string;
+    confidence: number;
+  }>;
+  memories: Array<{
+    content: string;
+    importance: 'high' | 'medium' | 'low';
+    category: 'preference' | 'fact' | 'event' | 'decision' | 'insight';
+    entityNames: string[];
+  }>;
+}
+
+/**
+ * Extract entity and memory suggestions from a chat exchange
+ * Returns suggestions for user confirmation (Bonsai principle)
+ */
+export async function extractChatSuggestions(
+  userMessage: string,
+  assistantResponse: string,
+  existingEntities: Entity[] = [],
+  existingMemories: Memory[] = []
+): Promise<ChatSuggestionResult> {
+  // Skip very short exchanges
+  if (userMessage.length < 15) {
+    return { entities: [], memories: [] };
+  }
+
+  // Build context about what we already know
+  let context = '';
+
+  if (existingEntities.length > 0) {
+    const entityList = existingEntities
+      .slice(0, 30)
+      .map(e => `${e.name} (${e.type}, ${e.domain})`)
+      .join(', ');
+    context += `\n\nExisting entities (DO NOT re-extract these): ${entityList}`;
+  }
+
+  if (existingMemories.length > 0) {
+    const memoryList = existingMemories
+      .slice(0, 20)
+      .map(m => m.content)
+      .join('; ');
+    context += `\n\nExisting memories (DO NOT duplicate these): ${memoryList}`;
+  }
+
+  const conversationText = `User message: ${userMessage}\n\nAssistant response: ${assistantResponse}`;
+
+  const result = await extract<ChatSuggestionResult>(
+    CHAT_SUGGESTION_PROMPT + context,
+    conversationText,
+    CHAT_SUGGESTION_SCHEMA
+  );
+
+  if (isError(result)) {
+    console.error('Chat suggestion extraction failed:', result.error);
+    return { entities: [], memories: [] };
+  }
+
+  // Filter by confidence threshold
+  const filteredEntities = (result.data.entities || []).filter(e => e.confidence >= 0.6);
+  const filteredMemories = result.data.memories || [];
+
+  return {
+    entities: filteredEntities,
+    memories: filteredMemories,
+  };
+}
+
 /**
  * Gather reference context for a user message
  * Searches connected reference plugins (Notion, Apple Notes) for relevant content
@@ -938,37 +1088,42 @@ Already offered: ${context.offeredIntegrations.join(', ') || 'none'}
 Already connected: ${context.connectedIntegrations.join(', ') || 'none'}`
     : '';
 
-  // Build document content section if documents were uploaded
-  // Truncate each document to prevent prompt overflow (max ~3000 chars per doc, ~10000 total)
-  const MAX_DOC_LENGTH = 3000;
-  const MAX_TOTAL_DOC_LENGTH = 10000;
-
+  // Build document context from pre-extracted data (Stage 1 results)
+  // This uses structured extraction results, not raw document content
   let documentContext = '';
-  if (context.documents && context.documents.length > 0) {
-    let totalLength = 0;
-    const truncatedDocs: string[] = [];
+  if (context.documentExtraction) {
+    const ext = context.documentExtraction;
+    const entityList = ext.entities.map(e => {
+      let desc = `${e.name} (${e.type}, ${e.domain})`;
+      if (e.relationship) desc += ` - ${e.relationship}`;
+      if (e.description) desc += `: ${e.description}`;
+      if (e.date) desc += ` [${e.date}]`;
+      return desc;
+    }).join('\n  - ');
 
-    for (const doc of context.documents) {
-      const remainingSpace = MAX_TOTAL_DOC_LENGTH - totalLength;
-      if (remainingSpace <= 0) break;
+    const domainList = ext.domains.map(d =>
+      d.description ? `${d.type}: ${d.description}` : d.type
+    ).join(', ');
 
-      const maxForThisDoc = Math.min(MAX_DOC_LENGTH, remainingSpace);
-      const content = doc.content.length > maxForThisDoc
-        ? doc.content.slice(0, maxForThisDoc) + '\n[...truncated]'
-        : doc.content;
+    const gapsToExplore = ext.topicsNotCovered?.length
+      ? `\nTopics NOT covered (good to ask about): ${ext.topicsNotCovered.join(', ')}`
+      : '';
 
-      truncatedDocs.push(`--- ${doc.filename} ---\n${content}`);
-      totalLength += content.length;
-    }
+    documentContext = `\n\n📄 DOCUMENT PROVIDED - Pre-extracted summary:
+"${ext.summary}"
 
-    documentContext = `\n\n📄 UPLOADED DOCUMENTS (TREAT AS COMPREHENSIVE USER INPUT):
-${truncatedDocs.join('\n\n')}
---- END DOCUMENTS ---
+Life domains covered: ${domainList}
 
-⚠️ IMPORTANT: The user has shared these documents as their comprehensive introduction.
-Extract ALL entities (people, projects, events, goals, focuses) from this content.
-Do NOT ask generic questions about information already covered in these documents.
-Your response should acknowledge this rich context and ask about something NOT covered.`;
+Entities extracted from document:
+  - ${entityList}
+${gapsToExplore}
+
+⚠️ IMPORTANT: The user shared a comprehensive onboarding document.
+- Do NOT re-extract these entities (they're already captured above)
+- Do NOT ask about topics already covered in the document
+- Your response should acknowledge this rich context
+- Ask about gaps or topics NOT covered in the document
+- If the document was comprehensive, consider marking isComplete=true`;
   }
 
   const prompt = `You are Ray, a personal coach AI conducting an onboarding conversation.

@@ -1,10 +1,10 @@
 Name: Marcus Wendt
 Email: marcus@field.io
 
-----
+---
 
 
-Ok, let's start with WORK: 
+Ok, let's start with WORK:
 Im the founder + Creative CEO of FIELD.IO a design studio based in London, UK + Berlin, DE.
 
 You can find us here: http://www.field.io
@@ -19,7 +19,7 @@ It's Jan 5, we're back to work after a busy 2025. Priorities right now are:
 - Continuing this discussion with my MD about his role
 - Brand + PR (which feeds into newbiz)
 - Our Berlin studio plans
-- Our Hong Kong expansion plans 
+- Our Hong Kong expansion plans
 
 and in general providing leadership and vision to our team of ~50 employees!
 
@@ -36,7 +36,7 @@ Artists that I keep coming back to as well as recent discoveries:
 
 **Sho Shibuya** — Daily ritual as discipline; reducing chaos to the essential through quiet, sustained attention
 
-----
+---
 
 FAMILY:
 
@@ -53,7 +53,7 @@ We're currently in Wellington, New Zealand on a visit to the grandparents Tony +
 We live in our house at 286 Capworth St, E10 7BG London, UK.
 We're currently in the middle of a kitchen + renovation project... hopefully completed around April-May 2026.
 
-----
+---
 
 FRIENDS:
 
@@ -64,7 +64,7 @@ Will Denning, Philipp von Lintel, Christian Klotz, my friend + neighbour Andrea 
 the Epping Eagles (Will Denning, Ondrej Zunka, Lukas Voir) my London gravel bike designer friends
 
 
-----
+---
 
 SPORT:
 
@@ -103,7 +103,7 @@ Current focus: Building base for HMR peak in May. Perfect alignment with your wi
 https://www.themountainraces.cc
 https://www.strava.com/athletes/13736588
 
-----
+---
 
 SIDE-PROJECTS:
 
@@ -121,7 +121,7 @@ I'm currently exploring several product / startup ideas that may feed into FIELD
 ... and many many unfinished explorations.
 
 
---------
+---
 
 EXPECTED RESULT:
 
@@ -144,12 +144,17 @@ Projects:
 
 
 People:
-- Celine 
+- Celine
 - Rafael
 - Luca
 - Elio
 - Tony
 - Maureen
+...
+
+
+Events:
+- Rafael's birthday 02 Feb 2020
 ...
 
 

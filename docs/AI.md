@@ -1,101 +1,231 @@
 # AI System
 
-> Documentation for Canopy's AI integration using Claude.
+> The heart of Canopy: extraction, memory, and context management.
 
 ## Overview
 
 Canopy uses Claude (Anthropic) as its AI backbone. The AI powers:
 
 1. **Ray** - The attention coach personality
-2. **Entity extraction** - NER from user messages during onboarding
-3. **Document processing** - Extract content from uploads
+2. **Entity extraction** - NER from conversations and documents
+3. **Memory generation** - Long-term pattern recognition
 4. **Context management** - Smart conversation compaction
+5. **Document processing** - Two-stage extraction pipeline
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  src/lib/ai/                         │
-│  ┌───────────────┐  ┌──────────────────────────────┐│
-│  │   index.ts    │  │  Exports: complete, stream,  ││
-│  │  (provider    │  │  extract, isError, types     ││
-│  │  abstraction) │  │                              ││
-│  └───────────────┘  └──────────────────────────────┘│
-│  ┌───────────────┐  ┌──────────────────────────────┐│
-│  │   claude.ts   │  │  Claude-specific impl        ││
-│  │  (impl)       │  │  Streaming, web fallbacks    ││
-│  └───────────────┘  └──────────────────────────────┘│
-│  ┌───────────────┐  ┌──────────────────────────────┐│
-│  │  context.ts   │  │  Token estimation            ││
-│  │  (context     │  │  Summarization               ││
-│  │   mgmt)       │  │  Entity relevance scoring    ││
-│  └───────────────┘  └──────────────────────────────┘│
-│  ┌───────────────┐  ┌──────────────────────────────┐│
-│  │ extraction.ts │  │  Domain extraction           ││
-│  │  (domain      │  │  Entity extraction           ││
-│  │   specific)   │  │  Chat response generation    ││
-│  └───────────────┘  └──────────────────────────────┘│
-└─────────────────────────────────────────────────────┘
+src/lib/ai/
+├── index.ts          # Provider abstraction (complete, stream, extract)
+├── provider.ts       # Provider interface & registry
+├── providers/
+│   └── claude.ts     # Claude-specific implementation
+├── context.ts        # Context window management & summarization
+├── extraction.ts     # Entity extraction & onboarding (THE HEART)
+└── memory.ts         # Memory formatting utilities
 ```
 
-## API Methods
+---
 
-### `complete(messages, options)`
+## Two-Stage Extraction Architecture
 
-Non-streaming completion. Returns full response.
+When processing comprehensive documents (onboarding, uploads), Canopy uses a two-stage pipeline to maximize context utilization:
+
+### Stage 1: Document Extraction
+
+**Function:** `extractFromOnboardingDocument(content, filename)`
+
+Processes the **full document** without truncation using the complete context window.
 
 ```typescript
-const result = await complete(
-  [{ role: 'user', content: 'Hello' }],
-  { system: 'You are helpful.', maxTokens: 1024 }
-);
-
-if (isError(result)) {
-  console.error(result.error);
-} else {
-  console.log(result.content);
+interface OnboardingDocumentExtraction {
+  summary: string;                    // 2-3 sentence user summary
+  domains: Array<{
+    type: 'work' | 'family' | 'sport' | 'personal' | 'health';
+    description?: string;
+  }>;
+  entities: Array<{
+    name: string;
+    type: 'person' | 'project' | 'company' | 'event' | 'goal' | 'focus';
+    domain: string;
+    description?: string;
+    relationship?: string;            // For people: wife, son, colleague
+    priority?: 'critical' | 'active' | 'background';
+    date?: string;                    // For events
+    needsConfirmation?: boolean;      // For interpretive entities
+  }>;
+  topicsNotCovered?: string[];        // Gaps to explore in conversation
 }
 ```
 
-### `stream(messages, callbacks, options)`
+**Extraction Rules:**
+- People: Everyone mentioned with relationship
+- Domains: Which life areas are covered
+- Goals: Explicit desires ("I want to...", "I need to...")
+- Focuses: Interpretive themes (ALWAYS `needsConfirmation=true`)
+- Events: Birthdays, anniversaries, deadlines
+- Gaps: What's missing that conversation should explore
 
-Streaming completion with delta events.
+### Stage 2: Conversational Response
+
+**Function:** `generateOnboardingResponse(context)`
+
+Receives the **structured extraction** (small) rather than raw document (large).
 
 ```typescript
-const { streamId, cancel } = stream(
-  [{ role: 'user', content: 'Tell me a story' }],
-  {
-    onDelta: (text) => console.log(text),
-    onEnd: () => console.log('Done'),
-    onError: (error) => console.error(error),
-  },
-  { system: 'You are a storyteller.', maxTokens: 2048 }
-);
-
-// To cancel early:
-cancel();
+// Context includes pre-extracted data
+const context: OnboardingContext = {
+  messages: [...],
+  collected: { domains, entities, urls, integrations },
+  documentExtraction: stage1Result,  // Structured, not raw
+  availableIntegrations: [...],
+};
 ```
 
-### `extract(prompt, input, schema, options)`
+The prompt receives:
+```
+DOCUMENT PROVIDED - Pre-extracted summary:
+"Celine is a 42-year-old mother focused on family, fitness, and fertility..."
 
-Structured JSON extraction.
+Life domains covered: family, health, work
 
+Entities extracted:
+  - Marcus (person, family) - husband: Runs his own company
+  - Rafael (person, family) - son: Born 02/02/2020
+  ...
+
+Topics NOT covered: fitness specifics, work details
+```
+
+**Benefits:**
+- Full document context utilized in Stage 1
+- Compact structured data in Stage 2
+- AI knows what's covered vs. what to explore
+- No repeated extraction of same entities
+
+---
+
+## Entity Types
+
+### Standard Entities
+
+| Type | Domain | Example |
+|------|--------|---------|
+| `person` | any | Marcus (husband), Sarah (colleague) |
+| `project` | work/personal | Canopy, House Renovation |
+| `company` | work | FIELD.IO, Client X |
+| `event` | any | Rafael's Birthday, Hellenic Mountain Race |
+
+### Special Entity Types
+
+**Goals** - Things the user wants to achieve
 ```typescript
-const result = await extract(
-  'Extract all people mentioned',
-  userMessage,
-  {
-    type: 'object',
-    properties: {
-      people: { type: 'array', items: { type: 'string' } }
-    }
-  }
-);
-
-if (!isError(result)) {
-  console.log(result.data.people);
+{
+  name: "Lose Weight",
+  type: "goal",
+  domain: "health",
+  priority: "critical",        // Based on emotional weight
+  targetDate: "May 2026",      // When to achieve
+  description: "Need to lose weight for health and fertility"
 }
 ```
+
+**Focuses** - Interpretive life themes (ALWAYS need confirmation)
+```typescript
+{
+  name: "Body & Fertility",
+  type: "focus",
+  domain: "health",
+  priority: "critical",
+  needsConfirmation: true,     // REQUIRED for focuses
+  description: "Weight loss tied to hopes for another child (girl)"
+}
+```
+
+Good focus names: 2-4 words, thematic
+- "Work-Life Balance"
+- "Structure & Control"
+- "Mental Load"
+- "Emotional Processing"
+
+---
+
+## Anti-Hallucination Rules
+
+Critical extraction rules to prevent AI fabrication:
+
+```typescript
+// From ONBOARDING_RESPONSE_SCHEMA
+CRITICAL ANTI-HALLUCINATION RULES:
+1. ONLY extract entities that are EXPLICITLY mentioned in the user's message
+2. NEVER infer, assume, or "fill in" entities that weren't stated
+3. If the user says "my wife" without a name, extract NOTHING
+4. Generic terms are NOT entities unless the user gives them a specific name
+5. When in doubt, extract NOTHING rather than guess
+
+DANGEROUS PATTERNS TO AVOID:
+- User: "I work at a startup" → DON'T extract "Startup Inc." as a company
+- User: "my wife" → DON'T guess her name
+- User: "my kids" → DON'T invent children entities
+- User: "a project I'm working on" → DON'T create "Project X"
+```
+
+**Confidence Scoring:**
+- Explicit names with context → High confidence
+- Partial information → `needsConfirmation: true`
+- Generic mentions → Do not extract
+
+---
+
+## Memory System
+
+### Memory Generation
+
+Memories are extracted from conversations to build long-term understanding:
+
+```typescript
+interface Memory {
+  id: string;
+  content: string;           // The fact or pattern
+  source_type: 'thread' | 'capture' | 'upload';
+  source_id: string;
+  entities: string[];        // Related entity IDs
+  importance: number;        // 0-1, affects retrieval
+  tags: string[];
+  created_at: Date;
+  expires_at?: Date;         // For time-sensitive memories
+}
+```
+
+### Memory Extraction Schema
+
+```typescript
+const MEMORY_EXTRACTION_SCHEMA = {
+  facts: [{
+    content: string,         // The fact to remember
+    entities: string[],      // Entity names mentioned
+    importance: number,      // 0-1 based on emotional weight
+    type: 'fact' | 'preference' | 'goal' | 'relationship'
+  }]
+};
+```
+
+### Pattern Memory
+
+User-confirmed patterns from cross-domain conversations:
+
+```typescript
+// When user clicks "Yes, remember this pattern"
+await createMemory(
+  "Pattern: Work-family interplay - tracking how these domains interact",
+  'thread',
+  threadId,
+  entityIds,
+  0.8  // High importance for user-confirmed patterns
+);
+```
+
+---
 
 ## Context Window Management
 
@@ -107,176 +237,149 @@ Claude Sonnet 4 has a 200K token context window. Canopy manages this through sma
 const MAX_CONTEXT_TOKENS = 150000;    // Hard limit
 const TARGET_CONTEXT_TOKENS = 100000; // Compaction trigger
 const MIN_RECENT_MESSAGES = 4;        // Always preserved
-const SUMMARY_THRESHOLD = 10;         // Min messages to summarize
 const CHARS_PER_TOKEN = 4;            // Estimation ratio
-```
-
-### Token Estimation
-
-Simple character-based estimation:
-
-```typescript
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / CHARS_PER_TOKEN);
-}
 ```
 
 ### Compaction Flow
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  prepareContext()                    │
-├─────────────────────────────────────────────────────┤
-│  1. If messages <= MIN_RECENT_MESSAGES              │
-│     → Return all messages                           │
-│                                                     │
-│  2. Estimate total tokens                           │
-│     → If < TARGET_CONTEXT_TOKENS, return with       │
-│       optional summary prefix                       │
-│                                                     │
-│  3. Need compaction:                                │
-│     a. Split: older messages | recent messages      │
-│     b. Summarize older via Claude                   │
-│     c. Return: [summary message] + recent           │
-│     d. Mark wasCompacted = true                     │
-└─────────────────────────────────────────────────────┘
+1. Estimate total token count
+2. If under TARGET_CONTEXT_TOKENS → use full history
+3. If over threshold:
+   a. Keep last 4 messages intact
+   b. Summarize older messages via Claude
+   c. Store summary in thread.summary
+4. On resume, load summary from database
 ```
 
 ### Summary Storage
 
-Thread summaries persist in the database:
-
 ```sql
-threads.summary         -- The compacted summary text
+threads.summary         -- Compacted summary text
 threads.summary_up_to   -- Message index where summary ends
 ```
 
-When resuming a thread:
-1. Load summary from database
-2. Pass to `buildChatContext()`
-3. Only messages after `summary_up_to` are in full context
+---
 
-### Entity Relevance Scoring
+## API Methods
 
-When context is limited, entities are scored for relevance:
+### `complete(messages, options)`
+
+Non-streaming completion:
 
 ```typescript
-function selectRelevantEntities(query, allEntities, maxEntities = 15) {
-  // Score each entity:
-  // +100  Direct name mention in query
-  // +20   Name contains query word
-  // +10   Description contains query word
-  // +15   Domain matches query keywords
-  // +30   Mentioned in last 24 hours
-  // +15   Mentioned in last week
-  // +5    Mentioned in last month
-}
+const result = await complete(
+  [{ role: 'user', content: 'Hello' }],
+  { system: 'You are helpful.', maxTokens: 1024 }
+);
 ```
+
+### `stream(messages, callbacks, options)`
+
+Streaming with deltas:
+
+```typescript
+const { cancel } = stream(
+  messages,
+  {
+    onDelta: (text) => appendToResponse(text),
+    onEnd: () => saveMessage(),
+    onError: (err) => showError(err),
+  },
+  { system: raySystemPrompt }
+);
+```
+
+### `extract<T>(prompt, input, schema, options)`
+
+Structured JSON extraction:
+
+```typescript
+const result = await extract<OnboardingResponse>(
+  prompt,           // System instructions
+  userMessage,      // Content to extract from
+  RESPONSE_SCHEMA,  // JSON schema
+  { temperature: 0.5 }
+);
+```
+
+---
 
 ## Ray System Prompt
 
-Ray has a consistent personality defined in `extraction.ts`:
+Ray's personality is defined in extraction functions:
 
 ```typescript
-const RAY_SYSTEM_PROMPT = `You are Ray, an AI attention coach in Canopy.
+const rayPrompt = `You are Ray, a personal coach AI in Canopy.
 
-Your role is to help the user manage their attention across life domains:
-- Work projects and deadlines
-- Family commitments
-- Training/fitness goals
-- Personal projects and health
+YOUR GOAL: Understand the user's life context to be a useful coach.
 
 Voice:
-- Warm but direct—you're a coach, not a cheerleader
-- Use their language and entity names naturally
+- Warm but direct—coach, not cheerleader
+- Use their names naturally (Marcus, Celine, Rafael)
 - Notice patterns (conflicts, overcommitments, neglected areas)
-- Keep responses concise but thoughtful
+- Concise but thoughtful responses
 
-You have access to their entity graph and recent context.
-Use @mentions naturally when referencing their people/projects.`;
+Context:
+- You have access to their entity graph
+- Use @mentions for their people/projects
+- Remember what they've already told you
+`;
 ```
 
-## Extraction Functions
-
-### Domain Extraction
-
-Used during onboarding to categorize responses:
-
-```typescript
-extractDomains(text: string): Promise<{
-  domains: Array<{
-    name: string;
-    type: 'work' | 'family' | 'sport' | 'personal' | 'health';
-  }>;
-}>
-```
-
-### Entity Extraction
-
-Extract people, projects, events from text:
-
-```typescript
-extractWorkEntities(text: string): Promise<{
-  projects: EntitySuggestion[];
-  people: EntitySuggestion[];
-  events: EntitySuggestion[];
-}>
-```
-
-### Document Extraction
-
-Process uploaded files:
-
-```typescript
-extractFromDocument(content: string, filename: string): Promise<{
-  title: string;
-  summary: string;
-  entities: EntitySuggestion[];
-  keyDates: string[];
-  actionItems: string[];
-}>
-```
-
-## Mock Mode
-
-When running without Electron (browser dev mode) or without an API key, the system falls back to mock responses:
-
-```typescript
-const isElectron = typeof window !== 'undefined'
-  && window.canopy?.claude !== undefined;
-
-// Graceful degradation
-if (!isElectron) {
-  return mockResponse();
-}
-```
-
-This allows UI development without API costs.
+---
 
 ## Error Handling
 
-All AI functions return a discriminated union:
+All AI functions return discriminated unions:
 
 ```typescript
-type AIResponse =
-  | { content: string }           // Success
-  | { error: string; code: string } // Error
+type AIResult<T> =
+  | { data: T }
+  | { error: string; code: string }
 
 function isError(result): result is AIError {
   return 'error' in result;
 }
 ```
 
-Common error codes:
+**Error Codes:**
 - `NO_API_KEY` - API key not configured
-- `RATE_LIMITED` - Too many requests
-- `STREAM_ERROR` - Streaming connection failed
+- `NOT_ELECTRON` - Running in browser without Electron
+- `RATE_LIMITED` - 429 from API
 - `PARSE_ERROR` - JSON extraction failed
+- `NETWORK_ERROR` - Connection failed
 
-## Performance Considerations
+**Fallback Behavior:**
 
-1. **Streaming** - Chat always streams to reduce perceived latency
-2. **Token estimation** - Cheap heuristic avoids expensive tokenization
-3. **Incremental summarization** - Only summarize when needed
-4. **Entity caching** - Entities loaded once per session
-5. **Summary persistence** - Avoid re-summarizing on thread resume
+```typescript
+if (isError(result)) {
+  console.error('Extraction failed:', result.error, 'code:', result.code);
+  return fallbackResponse;
+}
+```
+
+---
+
+## File Reference
+
+| File | Purpose |
+|------|---------|
+| `extraction.ts:169-226` | `extractFromOnboardingDocument` - Stage 1 |
+| `extraction.ts:778-921` | `generateOnboardingResponse` - Stage 2 |
+| `extraction.ts:101-162` | `OnboardingDocumentExtraction` schema |
+| `context.ts` | Token estimation & summarization |
+| `memory.ts` | Memory formatting for context |
+
+---
+
+## Testing Checklist
+
+- [ ] Upload comprehensive document → extracts all entities
+- [ ] Paste document text → same extraction
+- [ ] Generic mentions ("my wife") → no entity created
+- [ ] Focus extraction → always has `needsConfirmation: true`
+- [ ] Birthday dates → creates recurring events
+- [ ] Goals with dates → captures `targetDate`
+- [ ] Large documents → no truncation in Stage 1
+- [ ] Stage 2 prompt → compact, structured format

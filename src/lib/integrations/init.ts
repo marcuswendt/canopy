@@ -7,10 +7,12 @@ import { weatherPlugin } from './weather';
 import { whoopPlugin } from './whoop';
 import { googlePlugin } from './google';
 
-// Default plugins that are always enabled
+// Default plugins that are always enabled (no auth required)
 const DEFAULT_PLUGINS = ['time', 'weather'];
 
 // All available plugins
+// Note: "Health & Fitness" is a UI category, not a plugin
+// Individual integrations (WHOOP, Oura, etc.) are registered separately
 const ALL_PLUGINS = [timePlugin, weatherPlugin, whoopPlugin, googlePlugin];
 
 /**
