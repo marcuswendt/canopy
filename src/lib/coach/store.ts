@@ -4,19 +4,50 @@ import { DEFAULT_RAY_STATE, type RayState, type OnboardingPhase, daysUntil } fro
 
 // Main Ray state store
 const STORAGE_KEY = 'canopy_ray_state';
+const PLUGIN_ID = 'ray_coach';
+
+// Check if we're in Electron with canopy API
+const isElectron = browser && typeof window !== 'undefined' && window.canopy?.getPluginState !== undefined;
 
 function createRayStore() {
-  // Load from localStorage if available
-  const initial = browser && localStorage.getItem(STORAGE_KEY)
-    ? JSON.parse(localStorage.getItem(STORAGE_KEY)!)
-    : DEFAULT_RAY_STATE;
-  
-  const { subscribe, set, update } = writable<RayState>(initial);
-  
-  // Persist to localStorage on changes
+  const { subscribe, set, update } = writable<RayState>(DEFAULT_RAY_STATE);
+
+  // Load state asynchronously
+  if (browser) {
+    (async () => {
+      try {
+        if (isElectron) {
+          // Load from database via Electron IPC
+          const saved = await window.canopy!.getPluginState(PLUGIN_ID);
+          if (saved?.state) {
+            set(JSON.parse(saved.state));
+          }
+        } else {
+          // Fallback to localStorage for web dev mode
+          const saved = localStorage.getItem(STORAGE_KEY);
+          if (saved) {
+            set(JSON.parse(saved));
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load ray state:', e);
+      }
+    })();
+  }
+
+  // Persist on changes
+  let saveTimeout: ReturnType<typeof setTimeout> | null = null;
   if (browser) {
     subscribe(state => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      // Debounce saves
+      if (saveTimeout) clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => {
+        if (isElectron) {
+          window.canopy!.setPluginState({ pluginId: PLUGIN_ID, state: JSON.stringify(state) });
+        } else {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        }
+      }, 100);
     });
   }
   
