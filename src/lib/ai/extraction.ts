@@ -100,6 +100,66 @@ export interface ExtractedDomain {
   confidence: number;
 }
 
+const ACKNOWLEDGMENT_SCHEMA = {
+  type: 'object',
+  properties: {
+    response: { type: 'string', description: 'A brief, natural acknowledgment' },
+  },
+  required: ['response'],
+};
+
+/**
+ * Generate a contextual acknowledgment for what the user just shared during onboarding.
+ * Uses AI to respond naturally to the specific content, not just generic templates.
+ */
+export async function generateDomainAcknowledgment(
+  userInput: string,
+  extractedDomains: string[],
+  existingDomains: string[] = []
+): Promise<string> {
+  // Check if URLs were provided
+  const hasUrls = userInput.includes('[User provided') && userInput.includes('URL');
+
+  const result = await extract<{ response: string }>(
+    `You are Ray, a personal coach. The user just shared part of their life during onboarding.
+
+Generate a brief, warm acknowledgment (1-2 short sentences, max 20 words) that:
+- Actually responds to WHAT they said, not just that they said something
+- Feels conversational and natural, like a real coach listening
+- Avoids generic phrases like "Got it" or "Thanks for sharing"
+- Can reference specific things they mentioned (names, activities, roles, company names)
+- Shows you understood the meaning, not just the words
+${hasUrls ? '- If URLs/links were shared, briefly acknowledge you\'ll check those out to learn more about them' : ''}
+
+Previously collected domains: ${existingDomains.join(', ') || 'none yet'}
+New domains identified: ${extractedDomains.join(', ')}
+
+Examples of good responses:
+- "Sarah and the kids—family's clearly central for you."
+- "A design studio with 45 people—that's a lot of plates spinning."
+- "Ultra-distance cycling. That takes serious commitment."
+- "Three young kids and a business—no wonder you're busy."
+- "FIELD.IO in London and Berlin—I'll take a look at those links to get the full picture."
+- "Founder and Creative CEO. The links will help me understand more about what you've built."
+
+Examples of bad responses:
+- "Got it: Family." (too generic)
+- "Thanks for sharing about your work." (too formal)
+- "I understand you have family." (robotic)
+- "I will look at your URLs." (awkward)`,
+    userInput,
+    ACKNOWLEDGMENT_SCHEMA,
+    { temperature: 0.8 }
+  );
+
+  if (isError(result)) {
+    // Fallback to simple acknowledgment if AI fails
+    return `${extractedDomains.join(', ')}—noted.`;
+  }
+
+  return result.data.response;
+}
+
 export async function extractDomains(input: string): Promise<string[]> {
   const result = await extract<{ domains: ExtractedDomain[] }>(
     `Extract the life domains the user mentions. Common domains include:
@@ -590,6 +650,200 @@ URL: ${url}`,
       details: e.details,
     })),
   };
+}
+
+// =============================================================================
+// AI-DRIVEN ONBOARDING
+// =============================================================================
+
+export interface OnboardingContext {
+  // Conversation so far
+  messages: Array<{ role: 'ray' | 'user'; content: string }>;
+
+  // What we've collected
+  collected: {
+    domains: string[];
+    entities: Array<{ name: string; type: string; domain: string; description?: string }>;
+    urls: string[];
+    integrations: string[];
+    userName?: string;
+    location?: string;
+  };
+
+  // What integrations are available to offer
+  availableIntegrations: Array<{ id: string; name: string; description: string }>;
+
+  // Which integrations have already been offered/connected
+  offeredIntegrations: string[];
+  connectedIntegrations: string[];
+}
+
+export interface OnboardingResponse {
+  // What Ray says next
+  response: string;
+
+  // Whether onboarding is complete enough to move on
+  isComplete: boolean;
+
+  // If AI wants to suggest an integration, which one
+  suggestIntegration?: string;
+
+  // Entities extracted from the user's last message
+  extractedEntities?: Array<{
+    name: string;
+    type: 'person' | 'project' | 'company' | 'event';
+    domain: 'work' | 'family' | 'sport' | 'personal' | 'health';
+    description?: string;
+    relationship?: string;
+    needsConfirmation?: boolean;  // True if entity type is ambiguous and needs user confirmation
+  }>;
+
+  // Domains extracted from the user's last message
+  extractedDomains?: Array<{
+    name: string;
+    type: 'work' | 'family' | 'sport' | 'personal' | 'health';
+  }>;
+}
+
+const ONBOARDING_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    response: {
+      type: 'string',
+      description: 'Ray\'s response - acknowledgment + question or wrap-up'
+    },
+    isComplete: {
+      type: 'boolean',
+      description: 'True if we have enough context to start (at least 2 domains with some depth)'
+    },
+    suggestIntegration: {
+      type: 'string',
+      description: 'Integration ID to suggest based on what user mentioned (e.g., "whoop" for fitness, "google-calendar" for work)'
+    },
+    extractedEntities: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          type: { type: 'string', enum: ['person', 'project', 'company', 'event'] },
+          domain: { type: 'string', enum: ['work', 'family', 'sport', 'personal', 'health'] },
+          description: { type: 'string' },
+          relationship: { type: 'string' },
+          needsConfirmation: {
+            type: 'boolean',
+            description: 'True if this entity type is ambiguous and needs user confirmation (especially for companies/organisations)'
+          }
+        },
+        required: ['name', 'type', 'domain']
+      }
+    },
+    extractedDomains: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          type: { type: 'string', enum: ['work', 'family', 'sport', 'personal', 'health'] }
+        },
+        required: ['name', 'type']
+      }
+    }
+  },
+  required: ['response', 'isComplete']
+};
+
+/**
+ * AI-driven onboarding: given full context, generate the next response.
+ * This replaces the scripted state machine with a single intelligent call.
+ */
+export async function generateOnboardingResponse(
+  context: OnboardingContext
+): Promise<OnboardingResponse> {
+  // Build conversation history for context
+  const conversationHistory = context.messages
+    .map(m => `${m.role === 'ray' ? 'Ray' : 'User'}: ${m.content}`)
+    .join('\n\n');
+
+  // Build what we know so far
+  const collectedSummary = `
+Domains discovered: ${context.collected.domains.length > 0 ? context.collected.domains.join(', ') : 'none yet'}
+Entities (people, projects, etc.): ${context.collected.entities.length > 0
+    ? context.collected.entities.map(e => `${e.name} (${e.type}, ${e.domain})`).join(', ')
+    : 'none yet'}
+URLs shared: ${context.collected.urls.length > 0 ? context.collected.urls.join(', ') : 'none'}
+User name: ${context.collected.userName || 'unknown'}
+Location: ${context.collected.location || 'unknown'}
+  `.trim();
+
+  // Build integration context
+  const integrationContext = context.availableIntegrations.length > 0
+    ? `\nAvailable integrations to suggest (if relevant to what user mentions):
+${context.availableIntegrations.map(i => `- ${i.id}: ${i.name} - ${i.description}`).join('\n')}
+Already offered: ${context.offeredIntegrations.join(', ') || 'none'}
+Already connected: ${context.connectedIntegrations.join(', ') || 'none'}`
+    : '';
+
+  const prompt = `You are Ray, a personal coach AI conducting an onboarding conversation.
+
+YOUR GOAL: Understand the user's life context so you can be a useful coach. You need:
+1. At least 2-3 life domains (work, family, sport, health, personal projects)
+2. Some depth in each area - key people, projects, goals, what keeps them busy
+3. The conversation should feel natural, not like an interrogation
+
+CONVERSATION SO FAR:
+${conversationHistory}
+
+WHAT WE'VE COLLECTED:
+${collectedSummary}
+${integrationContext}
+
+YOUR TASK:
+1. Read the user's last message carefully
+2. Extract any new domains or entities they mentioned (people, projects, companies, events)
+3. Generate a natural response that:
+   - Acknowledges what they just said (reference specific details, names, concepts)
+   - Asks a follow-up question that deepens understanding OR moves to a new area
+   - NEVER asks about something they already told you
+   - If they mentioned fitness/training/cycling/running, consider suggesting WHOOP
+   - If they mentioned work/calendar/meetings, consider suggesting Google Calendar
+4. Decide if we have enough context (2+ domains with meaningful depth)
+
+CRITICAL RULES:
+- Your response should be 1-3 sentences max
+- Actually respond to what they said - don't be generic
+- If they said their role, don't ask "what's your role"
+- If they named family members, don't ask "who's in your family"
+- When asking follow-ups, be specific: "What's keeping you busiest at FIELD.IO right now?" not "Tell me about work"
+- Only suggest an integration if it's directly relevant to what they just mentioned
+- Only mark isComplete=true when you have a real picture of their life (not just domain names)
+
+ENTITY EXTRACTION RULES:
+- People: First names only, with relationship to user (wife, son, friend, colleague)
+- Companies: ONLY extract as 'company' if user explicitly states their role/ownership (e.g., "I'm CEO of", "I founded", "I work at")
+- External organizations (race organizers, vendors, services) should NOT be extracted as companies - they are external references
+- Events: Races, conferences, deadlines the user is participating in
+- Projects: Work initiatives, side projects the user is actively working on
+- Set needsConfirmation=true for any company where ownership/role is unclear
+
+User's last message: "${context.messages[context.messages.length - 1]?.content || ''}"`;
+
+  const result = await extract<OnboardingResponse>(
+    prompt,
+    '', // Content is in the prompt
+    ONBOARDING_RESPONSE_SCHEMA,
+    { temperature: 0.8, maxTokens: 1000 }
+  );
+
+  if (isError(result)) {
+    // Fallback response
+    return {
+      response: "Tell me more about what keeps you busy day-to-day.",
+      isComplete: false,
+    };
+  }
+
+  return result.data;
 }
 
 // =============================================================================
