@@ -29,8 +29,11 @@ const dbPath = path.join(CANOPY_DIR, 'canopy.db');
 let db;
 
 function initDatabase() {
+  // Ensure directories exist before opening database
+  ensureDirectories();
+
   db = new Database(dbPath);
-  
+
   // Enable foreign keys
   db.pragma('foreign_keys = ON');
   
@@ -177,8 +180,7 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_signals_type ON signals(type);
     CREATE INDEX IF NOT EXISTS idx_uploads_status ON uploads(status);
   `);
-  
-  ensureDirectories();
+
   console.log('Database initialized at:', dbPath);
   console.log('Canopy directory:', CANOPY_DIR);
 }
