@@ -1,5 +1,7 @@
 // Canopy - Electron Main Process
-import { app, BrowserWindow, ipcMain } from 'electron';
+// Copyright © 2025 Marcus Wendt / FIELD.IO (https://field.io)
+// Proprietary and Confidential - All Rights Reserved
+import { app, BrowserWindow, ipcMain, nativeImage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -189,11 +191,16 @@ function initDatabase() {
 let mainWindow;
 
 function createWindow() {
+  // Load app icon
+  const iconPath = path.join(__dirname, 'resources', 'icon.png');
+  const icon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : undefined;
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 800,
     minHeight: 600,
+    icon,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -202,6 +209,11 @@ function createWindow() {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
   });
+
+  // Set dock icon on macOS
+  if (process.platform === 'darwin' && icon) {
+    app.dock.setIcon(icon);
+  }
 
   // Load the app
   if (process.env.NODE_ENV === 'development' || !app.isPackaged) {
@@ -743,6 +755,189 @@ ipcMain.handle('secrets:delete', (event, { key }) => {
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
+  }
+});
+
+// ============ OAuth ============
+
+// Helper to build OAuth authorization URL
+function buildOAuthUrl(config) {
+  const params = new URLSearchParams({
+    client_id: config.clientId,
+    redirect_uri: config.redirectUri || 'http://localhost:8765/oauth/callback',
+    response_type: 'code',
+    scope: config.scopes.join(' '),
+  });
+  if (config.state) params.set('state', config.state);
+  return `${config.authUrl}?${params.toString()}`;
+}
+
+// Start OAuth flow in a popup window
+ipcMain.handle('oauth:start', async (event, { config }) => {
+  return new Promise((resolve, reject) => {
+    const redirectUri = config.redirectUri || 'http://localhost:8765/oauth/callback';
+
+    // Create popup window for OAuth
+    const authWindow = new BrowserWindow({
+      width: 600,
+      height: 700,
+      show: true,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
+    });
+
+    const authUrl = buildOAuthUrl(config);
+    authWindow.loadURL(authUrl);
+
+    // Handle navigation to detect OAuth callback
+    authWindow.webContents.on('will-navigate', (_e, url) => {
+      handleOAuthCallback(url, redirectUri, authWindow, resolve, reject);
+    });
+
+    authWindow.webContents.on('will-redirect', (_e, url) => {
+      handleOAuthCallback(url, redirectUri, authWindow, resolve, reject);
+    });
+
+    // Handle window close
+    authWindow.on('closed', () => {
+      reject(new Error('OAuth window was closed'));
+    });
+  });
+});
+
+function handleOAuthCallback(url, redirectUri, authWindow, resolve, reject) {
+  if (url.startsWith(redirectUri)) {
+    try {
+      const urlObj = new URL(url);
+      const code = urlObj.searchParams.get('code');
+      const error = urlObj.searchParams.get('error');
+      const state = urlObj.searchParams.get('state');
+
+      authWindow.close();
+
+      if (error) {
+        reject(new Error(`OAuth error: ${error}`));
+      } else if (code) {
+        resolve({ code, state });
+      } else {
+        reject(new Error('No authorization code received'));
+      }
+    } catch (e) {
+      authWindow.close();
+      reject(e);
+    }
+  }
+}
+
+// Exchange authorization code for tokens
+ipcMain.handle('oauth:exchange', async (event, { pluginId, code, config }) => {
+  try {
+    // Get client secret from secure storage
+    let clientSecret = config.clientSecret;
+    if (!clientSecret && fs.existsSync(SECRETS_FILE)) {
+      const secrets = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf-8'));
+      clientSecret = secrets[`${pluginId}_client_secret`];
+    }
+
+    if (!clientSecret) {
+      return { error: 'Client secret not configured' };
+    }
+
+    const response = await fetch(config.tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        client_id: config.clientId,
+        client_secret: clientSecret,
+        redirect_uri: config.redirectUri || 'http://localhost:8765/oauth/callback',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return { error: errorData.error_description || 'Token exchange failed' };
+    }
+
+    const tokens = await response.json();
+
+    // Store tokens securely
+    const secrets = fs.existsSync(SECRETS_FILE)
+      ? JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf-8'))
+      : {};
+
+    secrets[`${pluginId}_access_token`] = tokens.access_token;
+    if (tokens.refresh_token) {
+      secrets[`${pluginId}_refresh_token`] = tokens.refresh_token;
+    }
+    if (tokens.expires_in) {
+      secrets[`${pluginId}_expires_at`] = Date.now() + tokens.expires_in * 1000;
+    }
+
+    fs.writeFileSync(SECRETS_FILE, JSON.stringify(secrets, null, 2), { mode: 0o600 });
+
+    return { success: true };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+// Refresh access token using refresh token
+ipcMain.handle('oauth:refresh', async (event, { pluginId, config }) => {
+  try {
+    const secrets = fs.existsSync(SECRETS_FILE)
+      ? JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf-8'))
+      : {};
+
+    const refreshToken = secrets[`${pluginId}_refresh_token`];
+    if (!refreshToken) {
+      return { error: 'No refresh token available' };
+    }
+
+    let clientSecret = config.clientSecret;
+    if (!clientSecret) {
+      clientSecret = secrets[`${pluginId}_client_secret`];
+    }
+
+    const response = await fetch(config.tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+        client_id: config.clientId,
+        client_secret: clientSecret,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return { error: errorData.error_description || 'Token refresh failed' };
+    }
+
+    const tokens = await response.json();
+
+    // Update stored tokens
+    secrets[`${pluginId}_access_token`] = tokens.access_token;
+    if (tokens.refresh_token) {
+      secrets[`${pluginId}_refresh_token`] = tokens.refresh_token;
+    }
+    if (tokens.expires_in) {
+      secrets[`${pluginId}_expires_at`] = Date.now() + tokens.expires_in * 1000;
+    }
+
+    fs.writeFileSync(SECRETS_FILE, JSON.stringify(secrets, null, 2), { mode: 0o600 });
+
+    return { success: true, accessToken: tokens.access_token };
+  } catch (error) {
+    return { error: error.message };
   }
 });
 

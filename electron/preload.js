@@ -115,4 +115,11 @@ contextBridge.exposeInMainWorld('canopy', {
 
   // ============ Weather ============
   getWeather: (location) => ipcRenderer.invoke('weather:get', { location }),
+
+  // ============ OAuth ============
+  oauth: {
+    start: (pluginId, config) => ipcRenderer.invoke('oauth:start', { pluginId, config }),
+    exchange: (pluginId, code, config) => ipcRenderer.invoke('oauth:exchange', { pluginId, code, config }),
+    refresh: (pluginId, config) => ipcRenderer.invoke('oauth:refresh', { pluginId, config }),
+  },
 });

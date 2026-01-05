@@ -240,26 +240,27 @@ function recoveryToCapacity(recovery: WhoopRecovery, sleep?: WhoopSleep): Capaci
 }
 
 // =============================================================================
-// STORAGE HELPERS (will be replaced by Electron secure storage)
+// STORAGE HELPERS (uses Electron secure storage via secrets API)
 // =============================================================================
 
-const STORAGE_KEY = 'canopy_whoop_tokens';
 const LAST_SYNC_KEY = 'canopy_whoop_last_sync';
 
 async function getStoredTokens(): Promise<{ accessToken: string; refreshToken: string } | null> {
-  if (typeof window === 'undefined') return null;
-  const stored = localStorage.getItem(STORAGE_KEY);
-  return stored ? JSON.parse(stored) : null;
-}
+  if (typeof window === 'undefined' || !window.canopy?.getSecret) return null;
 
-async function storeTokens(tokens: { accessToken: string; refreshToken: string }): Promise<void> {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(tokens));
+  const accessToken = await window.canopy.getSecret('whoop_access_token');
+  const refreshToken = await window.canopy.getSecret('whoop_refresh_token');
+
+  if (!accessToken) return null;
+  return { accessToken, refreshToken: refreshToken || '' };
 }
 
 async function clearTokens(): Promise<void> {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(STORAGE_KEY);
+  if (typeof window === 'undefined' || !window.canopy?.deleteSecret) return;
+
+  await window.canopy.deleteSecret('whoop_access_token');
+  await window.canopy.deleteSecret('whoop_refresh_token');
+  await window.canopy.deleteSecret('whoop_expires_at');
 }
 
 async function getLastSyncTime(): Promise<Date | null> {
@@ -315,17 +316,46 @@ export const whoopPlugin: CanopyPlugin = {
   },
   
   connect: async () => {
-    // In Electron, this would open OAuth flow
-    // For now, this is a placeholder
-    console.log('WHOOP OAuth flow would start here');
-    
-    // In real implementation:
-    // 1. Open browser to authUrl with clientId, scopes, redirect
-    // 2. Handle callback with auth code
-    // 3. Exchange code for tokens
-    // 4. Store tokens securely
-    
-    throw new Error('OAuth flow not implemented - set tokens manually for dev');
+    // Check if OAuth is available (Electron environment)
+    if (typeof window === 'undefined' || !window.canopy?.oauth) {
+      throw new Error('OAuth not available - requires Electron');
+    }
+
+    const config = whoopPlugin.authConfig!;
+
+    // Get client ID from secrets (must be configured in settings)
+    const clientId = await window.canopy.getSecret('whoop_client_id');
+    if (!clientId) {
+      throw new Error('WHOOP client ID not configured. Add it in Settings.');
+    }
+
+    try {
+      // Start OAuth flow - opens popup window
+      const { code } = await window.canopy.oauth.start('whoop', {
+        authUrl: config.authUrl,
+        clientId,
+        scopes: config.scopes,
+      });
+
+      // Exchange code for tokens
+      const result = await window.canopy.oauth.exchange('whoop', code, {
+        tokenUrl: config.tokenUrl,
+        clientId,
+      });
+
+      if (result.error) {
+        throw new Error(result.error);
+      }
+
+      // Load the new access token
+      const accessToken = await window.canopy.getSecret('whoop_access_token');
+      if (accessToken) {
+        api.setAccessToken(accessToken);
+      }
+    } catch (error) {
+      console.error('WHOOP OAuth failed:', error);
+      throw error;
+    }
   },
   
   disconnect: async () => {
