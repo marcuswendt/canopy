@@ -121,6 +121,31 @@
         threadSummary = currentThread.summary;
         summaryUpToIndex = currentThread.summary_up_to || 0;
       }
+
+      // Restore contextEntities from message entity references
+      const entityIdSet = new Set<string>();
+      for (const msg of messages) {
+        if (msg.entities) {
+          try {
+            const ids = JSON.parse(msg.entities) as string[];
+            for (const id of ids) entityIdSet.add(id);
+          } catch { /* ignore parse errors */ }
+        }
+      }
+
+      // Look up entities and add to context
+      const restoredEntities: Entity[] = [];
+      for (const id of entityIdSet) {
+        const entity = $entities.find(e => e.id === id);
+        if (entity) {
+          restoredEntities.push(entity);
+          threadDomains.add(entity.domain);
+        }
+      }
+      if (restoredEntities.length > 0) {
+        contextEntities = restoredEntities;
+        threadDomains = threadDomains; // trigger reactivity
+      }
     }
 
     if (entityId) {
