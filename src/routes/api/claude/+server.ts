@@ -1,0 +1,107 @@
+/**
+ * Claude API Route
+ *
+ * Server-side Claude API proxy for web deployment.
+ * Uses ANTHROPIC_API_KEY from environment variables.
+ */
+
+import { json } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
+import { parseBody, apiError } from '$lib/server/api-helpers';
+import Anthropic from '@anthropic-ai/sdk';
+import { ANTHROPIC_API_KEY } from '$env/static/private';
+
+// Initialize Anthropic client
+const anthropic = ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: ANTHROPIC_API_KEY })
+  : null;
+
+export const GET: RequestHandler = async () => {
+  // Health check - returns whether API key is configured
+  return json({ configured: !!anthropic });
+};
+
+export const POST: RequestHandler = async (event) => {
+  if (!anthropic) {
+    return apiError('Claude API not configured', 503);
+  }
+
+  const body = await parseBody<{
+    action: 'complete' | 'extract';
+    messages?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    system?: string;
+    maxTokens?: number;
+    temperature?: number;
+    // For extraction
+    prompt?: string;
+    input?: string;
+    schema?: object;
+  }>(event);
+
+  if (body.action === 'complete') {
+    if (!body.messages || body.messages.length === 0) {
+      return apiError('messages are required for completion');
+    }
+
+    try {
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: body.maxTokens || 4096,
+        temperature: body.temperature,
+        system: body.system,
+        messages: body.messages,
+      });
+
+      const textContent = response.content.find((c) => c.type === 'text');
+      return json({
+        content: textContent?.text || '',
+        usage: {
+          inputTokens: response.usage.input_tokens,
+          outputTokens: response.usage.output_tokens,
+        },
+      });
+    } catch (err: any) {
+      console.error('Claude API error:', err);
+      if (err.status === 429) {
+        return apiError('Rate limited', 429);
+      }
+      return apiError(err.message || 'Claude API error', 500);
+    }
+  }
+
+  if (body.action === 'extract') {
+    if (!body.prompt || !body.input || !body.schema) {
+      return apiError('prompt, input, and schema are required for extraction');
+    }
+
+    try {
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: body.maxTokens || 4096,
+        temperature: body.temperature ?? 0,
+        system: `${body.prompt}\n\nRespond with ONLY valid JSON matching this schema:\n${JSON.stringify(body.schema, null, 2)}`,
+        messages: [{ role: 'user', content: body.input }],
+      });
+
+      const textContent = response.content.find((c) => c.type === 'text');
+      const text = textContent?.text || '{}';
+
+      // Parse JSON from response
+      let data;
+      try {
+        // Handle potential markdown code blocks
+        const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        data = JSON.parse(jsonMatch ? jsonMatch[1] : text);
+      } catch {
+        return apiError('Failed to parse extraction result', 500);
+      }
+
+      return json({ data });
+    } catch (err: any) {
+      console.error('Claude extraction error:', err);
+      return apiError(err.message || 'Extraction failed', 500);
+    }
+  }
+
+  return apiError('Invalid action');
+};

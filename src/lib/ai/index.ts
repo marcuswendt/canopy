@@ -3,15 +3,28 @@
 
 export * from './provider';
 export { claudeProvider } from './providers/claude';
+export { claudeWebProvider } from './providers/claude-web';
 
 import { registerProvider, setActiveProvider, getProvider } from './provider';
 import { claudeProvider } from './providers/claude';
+import { claudeWebProvider } from './providers/claude-web';
+
+// Environment detection
+const isBrowser = typeof window !== 'undefined';
+const isElectron = isBrowser && (window as any).canopy?.claude !== undefined;
 
 // Register default providers (but don't override if test provider is already set)
 // This allows integration tests to register their provider before importing extraction functions
 registerProvider(claudeProvider);
+registerProvider(claudeWebProvider);
+
 if (!getProvider('test')) {
-  setActiveProvider('claude');
+  // Use web provider on Vercel/web, Electron provider on desktop
+  if (isBrowser && !isElectron) {
+    setActiveProvider('claude-web');
+  } else {
+    setActiveProvider('claude');
+  }
 }
 
 // Re-export commonly used functions with provider abstraction

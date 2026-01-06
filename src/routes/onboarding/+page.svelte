@@ -49,6 +49,7 @@
   let apiKeyError = $state('');
   let checkingApiKey = $state(true);
   let isElectron = $state(false);
+  let isWeb = $state(false);
 
   // Profile state (for StructuredInput)
   let profileValues = $state<Record<string, string>>({});
@@ -136,10 +137,34 @@
     // Guess location from system timezone
     guessedLocation = guessLocation();
 
-    // Check if we're running in Electron
+    // Check if we're running in Electron or Web
     isElectron = typeof window !== 'undefined' && window.canopy?.setSecret !== undefined;
+    isWeb = typeof window !== 'undefined' && !isElectron;
 
+    // Web mode: API key is handled server-side
+    if (isWeb) {
+      profileValues = { ...profileValues, location: guessedLocation };
+
+      // Check if API key is configured server-side
+      const hasKey = await hasApiKey();
+      checkingApiKey = false;
+
+      if (hasKey) {
+        // Load existing entities for duplicate detection
+        existingEntities = await getEntities();
+        // Start fresh onboarding
+        currentPhase = 'welcome';
+        addRayMessage(RAY_VOICE.onboarding.welcome);
+      } else {
+        // Server doesn't have API key configured - show error
+        apiKeyError = 'Claude API is not configured on this server. Please contact the administrator.';
+      }
+      return;
+    }
+
+    // Electron mode: API key is stored locally
     if (!isElectron) {
+      // Neither web nor Electron - shouldn't happen, but handle gracefully
       profileValues = { ...profileValues, location: guessedLocation };
       checkingApiKey = false;
       return;
@@ -1166,16 +1191,19 @@
             <span></span><span></span><span></span>
           </div>
         </div>
-      {:else if !isElectron}
+      {:else if !isElectron && !isWeb}
         <div class="api-setup">
-          <h2>Electron Required</h2>
+          <h2>Loading...</h2>
           <p class="api-description">
-            Canopy needs to run as a desktop app to securely store your API key and data.
+            Checking environment...
           </p>
-          <div class="electron-instructions">
-            <p>Run the Electron app:</p>
-            <code>npm run electron:dev</code>
-          </div>
+        </div>
+      {:else if isWeb && apiKeyError}
+        <div class="api-setup">
+          <h2>Configuration Error</h2>
+          <p class="api-description">
+            {apiKeyError}
+          </p>
         </div>
       {:else}
         <div class="api-setup">
