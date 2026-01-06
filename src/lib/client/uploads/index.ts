@@ -297,16 +297,15 @@ export async function processFile(upload: FileUpload): Promise<ExtractedContent>
     if (isTextFile) {
       const textContent = await readFileAsText(file);
 
-      // Store the text content
+      // Store the text content directly - no pre-processing needed
+      // Claude will handle the content when the message is sent
       uploadsStore.update(uploads =>
         uploads.map(u => u.id === upload.id ? { ...u, textContent } : u)
       );
 
-      // Use AI extraction on the content
-      const extracted = await extractFromDocument(textContent, {
-        filename: upload.filename,
-        mimeType: upload.mimeType,
-      });
+      const extracted: ExtractedContent = {
+        text: textContent,
+      };
       uploads.setExtracted(upload.id, extracted);
       return extracted;
     }
