@@ -37,7 +37,10 @@
   import MentionInput from '$lib/client/components/MentionInput.svelte';
   import ArtifactPanel from '$lib/client/components/ArtifactPanel.svelte';
   import Markdown from '$lib/client/components/Markdown.svelte';
+  import FileDropZone from '$lib/client/components/FileDropZone.svelte';
+  import UploadedFiles from '$lib/client/components/UploadedFiles.svelte';
   import { loadArtifacts } from '$lib/client/stores/artifacts';
+  import { uploads, completedUploads, type FileUpload } from '$lib/client/uploads';
   import { userSettings } from '$lib/client/stores/settings';
   import { weather } from '$lib/client/stores/weather';
 
@@ -55,6 +58,7 @@
   let messagesContainer: HTMLDivElement;
   let memoryPromptDismissed = $state(false);
   let memoryPromptSaving = $state(false);
+  let showFileUpload = $state(false);
 
   // Auto-scroll to bottom when messages change
   $effect(() => {
@@ -474,6 +478,24 @@
       {/if}
       
       <div class="input-area">
+        {#if showFileUpload}
+          <div class="file-upload-container">
+            <FileDropZone
+              compact={false}
+              onfilesAdded={(files) => {
+                if (files.length > 0) {
+                  showFileUpload = false;
+                }
+              }}
+            />
+            <button class="close-upload-btn" onclick={() => showFileUpload = false}>
+              Done
+            </button>
+          </div>
+        {/if}
+
+        <UploadedFiles showSuggestions={false} />
+
         <div class="input-container">
           <MentionInput
             bind:this={mentionInputRef}
@@ -484,7 +506,12 @@
             onchange={(_, mentions) => { explicitMentions = mentions; }}
           />
           <div class="input-actions">
-            <button class="input-action" title="Attach">📎</button>
+            <button
+              class="input-action"
+              class:active={showFileUpload}
+              title="Attach files"
+              onclick={() => showFileUpload = !showFileUpload}
+            >📎</button>
             <button class="input-action" title="Voice">🎤</button>
             <button class="send-btn" onclick={sendMessage} disabled={!inputValue.trim() || isLoading}>
               Send
@@ -758,8 +785,41 @@
     cursor: pointer;
     border-radius: var(--radius-sm);
     font-size: 14px;
+    transition: all 0.15s ease;
   }
-  
+
+  .input-action:hover {
+    background: var(--bg-tertiary);
+  }
+
+  .input-action.active {
+    background: var(--accent-muted);
+    color: var(--accent);
+  }
+
+  .file-upload-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+  }
+
+  .close-upload-btn {
+    align-self: flex-end;
+    padding: var(--space-xs) var(--space-md);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .close-upload-btn:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+  }
+
   .send-btn {
     padding: var(--space-sm) var(--space-md);
     background: var(--accent);
