@@ -57,6 +57,7 @@
   let messagesContainer: HTMLDivElement;
   let memoryPromptDismissed = $state(false);
   let memoryPromptSaving = $state(false);
+  let fileInputRef: HTMLInputElement;
 
   // Auto-scroll to bottom when messages change
   $effect(() => {
@@ -489,13 +490,14 @@
           />
           <div class="input-actions">
             <input
+              bind:this={fileInputRef}
               type="file"
-              id="chat-file-upload"
               multiple
-              style="display: none;"
+              style="position: absolute; opacity: 0; pointer-events: none;"
               onchange={(e) => {
                 const input = e.target as HTMLInputElement;
                 const files = Array.from(input.files || []);
+                console.log('[Chat] Files selected:', files.length);
                 for (const file of files) {
                   uploads.add({
                     filename: file.name,
@@ -513,7 +515,10 @@
               type="button"
               class="input-action"
               title="Attach files"
-              onclick={() => document.getElementById('chat-file-upload')?.click()}
+              onclick={() => {
+                console.log('[Chat] Attach clicked, ref:', fileInputRef);
+                fileInputRef?.click();
+              }}
             >📎</button>
             <button type="button" class="input-action" title="Voice">🎤</button>
             <button class="send-btn" onclick={sendMessage} disabled={!inputValue.trim() || isLoading}>
