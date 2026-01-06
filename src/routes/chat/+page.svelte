@@ -37,7 +37,6 @@
   import MentionInput from '$lib/client/components/MentionInput.svelte';
   import ArtifactPanel from '$lib/client/components/ArtifactPanel.svelte';
   import Markdown from '$lib/client/components/Markdown.svelte';
-  import FileDropZone from '$lib/client/components/FileDropZone.svelte';
   import UploadedFiles from '$lib/client/components/UploadedFiles.svelte';
   import { loadArtifacts } from '$lib/client/stores/artifacts';
   import { uploads, completedUploads, type FileUpload } from '$lib/client/uploads';
@@ -58,7 +57,6 @@
   let messagesContainer: HTMLDivElement;
   let memoryPromptDismissed = $state(false);
   let memoryPromptSaving = $state(false);
-  let showFileUpload = $state(false);
 
   // Auto-scroll to bottom when messages change
   $effect(() => {
@@ -478,22 +476,6 @@
       {/if}
       
       <div class="input-area">
-        {#if showFileUpload}
-          <div class="file-upload-container">
-            <FileDropZone
-              compact={false}
-              onfilesAdded={(files) => {
-                if (files.length > 0) {
-                  showFileUpload = false;
-                }
-              }}
-            />
-            <button class="close-upload-btn" onclick={() => showFileUpload = false}>
-              Done
-            </button>
-          </div>
-        {/if}
-
         <UploadedFiles showSuggestions={false} />
 
         <div class="input-container">
@@ -506,15 +488,28 @@
             onchange={(_, mentions) => { explicitMentions = mentions; }}
           />
           <div class="input-actions">
-            <button
-              class="input-action"
-              class:active={showFileUpload}
-              title="Attach files"
-              onclick={() => {
-                showFileUpload = !showFileUpload;
-                console.log('[Chat] File upload toggled:', showFileUpload);
+            <input
+              type="file"
+              id="chat-file-input"
+              multiple
+              class="hidden-file-input"
+              onchange={(e) => {
+                const input = e.target as HTMLInputElement;
+                const files = Array.from(input.files || []);
+                for (const file of files) {
+                  uploads.add({
+                    filename: file.name,
+                    mimeType: file.type,
+                    size: file.size,
+                    localPath: '',
+                    source: 'drop',
+                    file: file,
+                  });
+                }
+                input.value = '';
               }}
-            >📎</button>
+            />
+            <label for="chat-file-input" class="input-action" title="Attach files">📎</label>
             <button class="input-action" title="Voice">🎤</button>
             <button class="send-btn" onclick={sendMessage} disabled={!inputValue.trim() || isLoading}>
               Send
@@ -795,32 +790,17 @@
     background: var(--bg-tertiary);
   }
 
-  .input-action.active {
-    background: var(--accent-muted);
-    color: var(--accent);
+  .hidden-file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
   }
 
-  .file-upload-container {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-    margin-bottom: var(--space-md);
-  }
-
-  .close-upload-btn {
-    align-self: flex-end;
-    padding: var(--space-xs) var(--space-md);
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    color: var(--text-secondary);
-    font-size: 13px;
+  label.input-action {
     cursor: pointer;
-  }
-
-  .close-upload-btn:hover {
-    background: var(--bg-secondary);
-    color: var(--text-primary);
   }
 
   .send-btn {
