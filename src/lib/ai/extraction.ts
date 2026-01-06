@@ -571,8 +571,13 @@ export async function extractChatSuggestions(
   existingEntities: Entity[] = [],
   existingMemories: Memory[] = []
 ): Promise<ChatSuggestionResult> {
+  console.log('[Bonsai Extract] Starting extraction...', {
+    userMessageLength: userMessage.length,
+  });
+
   // Skip very short exchanges
   if (userMessage.length < 15) {
+    console.log('[Bonsai Extract] Skipping - message too short');
     return { entities: [], memories: [] };
   }
 
@@ -597,6 +602,7 @@ export async function extractChatSuggestions(
 
   const conversationText = `User message: ${userMessage}\n\nAssistant response: ${assistantResponse}`;
 
+  console.log('[Bonsai Extract] Calling AI extract...');
   const result = await extract<ChatSuggestionResult>(
     CHAT_SUGGESTION_PROMPT + context,
     conversationText,
@@ -604,13 +610,20 @@ export async function extractChatSuggestions(
   );
 
   if (isError(result)) {
-    console.error('Chat suggestion extraction failed:', result.error);
+    console.error('[Bonsai Extract] AI extraction failed:', result.error, 'code:', result.code);
     return { entities: [], memories: [] };
   }
+
+  console.log('[Bonsai Extract] Raw AI result:', result.data);
 
   // Filter by confidence threshold
   const filteredEntities = (result.data.entities || []).filter(e => e.confidence >= 0.6);
   const filteredMemories = result.data.memories || [];
+
+  console.log('[Bonsai Extract] Filtered result:', {
+    entities: filteredEntities.length,
+    memories: filteredMemories.length,
+  });
 
   return {
     entities: filteredEntities,

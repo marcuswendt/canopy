@@ -271,9 +271,19 @@
     messageId: string,
     sourceThreadId: string
   ) {
+    console.log('[Bonsai] Starting suggestion extraction...', {
+      userMessageLength: userMessage.length,
+      assistantResponseLength: assistantResponse.length,
+      messageId,
+    });
+
     try {
       // Fetch existing data to avoid duplicates
       const existingMemories = await getMemories(50);
+      console.log('[Bonsai] Existing data:', {
+        entities: $entities.length,
+        memories: existingMemories.length,
+      });
 
       // Extract suggestions using the combined extraction
       const suggestions = await extractChatSuggestions(
@@ -282,6 +292,8 @@
         $entities,
         existingMemories
       );
+
+      console.log('[Bonsai] Extraction result:', suggestions);
 
       // Add entity suggestions
       for (const entity of suggestions.entities) {
@@ -316,11 +328,9 @@
       }
 
       const total = suggestions.entities.length + suggestions.memories.length;
-      if (total > 0) {
-        console.log(`Created ${total} suggestions for Bonsai confirmation`);
-      }
+      console.log(`[Bonsai] Created ${total} suggestions for confirmation`);
     } catch (err) {
-      console.warn('Suggestion extraction failed:', err);
+      console.error('[Bonsai] Suggestion extraction failed:', err);
     }
   }
 

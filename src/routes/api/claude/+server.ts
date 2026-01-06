@@ -80,6 +80,8 @@ export const POST: RequestHandler = async (event) => {
       return apiError('prompt, input, and schema are required for extraction');
     }
 
+    console.log('[API Extract] Received extraction request, input length:', body.input.length);
+
     try {
       const response = await client.messages.create({
         model: 'claude-sonnet-4-20250514',
@@ -92,6 +94,8 @@ export const POST: RequestHandler = async (event) => {
       const textContent = response.content.find((c) => c.type === 'text');
       const text = textContent?.text || '{}';
 
+      console.log('[API Extract] Raw Claude response:', text.slice(0, 200));
+
       // Parse JSON from response
       let data;
       try {
@@ -99,12 +103,14 @@ export const POST: RequestHandler = async (event) => {
         const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
         data = JSON.parse(jsonMatch ? jsonMatch[1] : text);
       } catch {
+        console.error('[API Extract] Failed to parse JSON:', text.slice(0, 500));
         return apiError('Failed to parse extraction result', 500);
       }
 
+      console.log('[API Extract] Parsed data:', JSON.stringify(data).slice(0, 300));
       return json({ data });
     } catch (err: any) {
-      console.error('Claude extraction error:', err);
+      console.error('[API Extract] Claude API error:', err);
       return apiError(err.message || 'Extraction failed', 500);
     }
   }
