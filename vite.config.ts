@@ -10,4 +10,8 @@ export default defineConfig({
   build: {
     target: 'esnext',
   },
+  ssr: {
+    // Don't bundle native modules - they'll be dynamically imported at runtime
+    external: ['better-sqlite3'],
+  },
 });

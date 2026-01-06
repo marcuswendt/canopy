@@ -2,6 +2,9 @@
   "name": "canopy",
   "version": "0.1.0",
   "description": "An attention system that knows your life",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "author": {
     "name": "Marcus Wendt",
     "email": "marcus@field.io",
@@ -26,16 +29,12 @@
     "electron:preview": "vite build && electron ."
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.0.2",
     "@sveltejs/adapter-static": "^3.0.0",
     "@sveltejs/kit": "^2.15.0",
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
     "@vitest/ui": "^4.0.16",
     "concurrently": "^9.2.1",
     "dotenv": "^17.2.3",
-    "electron": "^39.0.0",
-    "electron-builder": "^26.0.0",
-    "electron-rebuild": "^3.2.9",
     "sharp": "^0.34.5",
     "svelte": "^5.0.0",
     "typescript": "^5.0.0",
@@ -43,12 +42,18 @@
     "vitest": "^4.0.16",
     "wait-on": "^9.0.3"
   },
+  "optionalDependencies": {
+    "@electron/rebuild": "^4.0.2",
+    "better-sqlite3": "^12.5.0",
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.0",
+    "electron-rebuild": "^3.2.9"
+  },
   "dependencies": {
     "@auth/core": "^0.41.1",
     "@auth/sveltekit": "^1.11.1",
     "@libsql/client": "^0.15.15",
     "@sveltejs/adapter-vercel": "^6.3.0",
-    "better-sqlite3": "^12.5.0",
     "marked": "^17.0.1",
     "uuid": "^13.0.0"
   },

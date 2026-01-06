@@ -7,7 +7,6 @@
  */
 
 import { createClient } from '@libsql/client';
-import Database from 'better-sqlite3';
 import { BetterSqlite3Adapter, TursoAdapter, initSchema, type DatabaseAdapter } from './db-adapter.js';
 import fs from 'fs';
 import path from 'path';
@@ -72,6 +71,8 @@ export async function createLocalAdapter(config: LocalConfig): Promise<DatabaseA
     fs.mkdirSync(config.uploadsDir, { recursive: true });
   }
 
+  // Dynamic import to avoid loading better-sqlite3 on Vercel
+  const Database = (await import('better-sqlite3')).default;
   const db = new Database(config.dbPath);
   db.pragma('foreign_keys = ON');
 

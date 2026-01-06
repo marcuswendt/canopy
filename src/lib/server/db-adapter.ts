@@ -9,7 +9,17 @@
  */
 
 import type { Client as TursoClient } from '@libsql/client';
-import type { Database as BetterSqlite3Database } from 'better-sqlite3';
+
+// Type definition for better-sqlite3 Database to avoid importing the package
+interface BetterSqlite3Database {
+  prepare(sql: string): {
+    all(...params: any[]): any[];
+    run(...params: any[]): { changes: number; lastInsertRowid: number | bigint };
+  };
+  transaction<T>(fn: (list: any[][]) => T): (list: any[][]) => T;
+  close(): void;
+  pragma(pragma: string): void;
+}
 
 export interface QueryResult {
   rows: any[];
