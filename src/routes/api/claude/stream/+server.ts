@@ -7,14 +7,13 @@
 import type { RequestHandler } from './$types';
 import { parseBody, apiError } from '$lib/server/api-helpers';
 import Anthropic from '@anthropic-ai/sdk';
-import { env } from '$env/dynamic/private';
 
 // Lazy-initialize Anthropic client (reads env at runtime)
 let anthropic: Anthropic | null = null;
 
 function getClient(): Anthropic | null {
   if (anthropic) return anthropic;
-  const apiKey = env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
   anthropic = new Anthropic({ apiKey });
   return anthropic;
