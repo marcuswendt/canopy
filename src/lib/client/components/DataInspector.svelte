@@ -1,6 +1,7 @@
 <!-- Data Inspector - Devtools for Canopy internals -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { entities } from '$lib/client/stores/entities';
   import { pluginStates, allPlugins, integrationSignals } from '$lib/client/integrations/registry';
   import { registry } from '$lib/client/integrations/registry';
@@ -169,6 +170,11 @@
     } catch (err) {
       threadMessages = [];
     }
+  }
+
+  function goToThread(thread: Thread) {
+    onClose();
+    goto(`/chat?thread=${thread.id}`);
   }
 
   $effect(() => {
@@ -372,14 +378,22 @@
           <h3>Threads ({dbThreads.length})</h3>
           <div class="thread-list">
             {#each dbThreads as thread}
-              <button
-                class="thread-item"
-                class:selected={selectedThread?.id === thread.id}
-                onclick={() => selectThread(thread)}
-              >
-                <span class="thread-title">{thread.title || 'Untitled'}</span>
-                <span class="thread-meta">{thread.message_count} msgs · {formatDate(thread.updated_at)}</span>
-              </button>
+              <div class="thread-row" class:selected={selectedThread?.id === thread.id}>
+                <button
+                  class="thread-item"
+                  onclick={() => selectThread(thread)}
+                >
+                  <span class="thread-title">{thread.title || 'Untitled'}</span>
+                  <span class="thread-meta">{thread.message_count} msgs · {formatDate(thread.updated_at)}</span>
+                </button>
+                <button
+                  class="thread-link-btn"
+                  onclick={() => goToThread(thread)}
+                  title="Open thread"
+                >
+                  →
+                </button>
+              </div>
             {/each}
           </div>
           {#if selectedThread}
@@ -712,7 +726,31 @@
     padding: var(--space-xs);
   }
 
+  .thread-row {
+    display: flex;
+    align-items: stretch;
+    border-radius: var(--radius-sm);
+  }
+
+  .thread-row:hover {
+    background: var(--bg-secondary);
+  }
+
+  .thread-row.selected {
+    background: var(--accent);
+  }
+
+  .thread-row.selected .thread-title,
+  .thread-row.selected .thread-meta {
+    color: white;
+  }
+
+  .thread-row.selected .thread-meta {
+    color: rgba(255, 255, 255, 0.7);
+  }
+
   .thread-item {
+    flex: 1;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -721,15 +759,35 @@
     background: transparent;
     text-align: left;
     cursor: pointer;
-    border-radius: var(--radius-sm);
   }
 
-  .thread-item:hover {
-    background: var(--bg-secondary);
+  .thread-link-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    opacity: 0;
+    transition: opacity 0.15s;
   }
 
-  .thread-item.selected {
-    background: var(--accent);
+  .thread-row:hover .thread-link-btn {
+    opacity: 1;
+  }
+
+  .thread-link-btn:hover {
+    color: var(--accent);
+  }
+
+  .thread-row.selected .thread-link-btn {
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .thread-row.selected .thread-link-btn:hover {
     color: white;
   }
 

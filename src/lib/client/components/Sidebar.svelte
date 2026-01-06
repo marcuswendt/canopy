@@ -3,6 +3,7 @@
   import { page } from '$app/stores';
   import { signOut } from '@auth/sveltekit/client';
   import { sidebarOpen, sidebarTab, pinnedItems, formatTimeAgo } from '$lib/client/stores/ui';
+  import { inspectorOpen } from '$lib/client/stores/inspector';
   import { entities, entitiesByDomain } from '$lib/client/stores/entities';
   import { getRecentThreads } from '$lib/client/db/client';
   import DomainBadge from './DomainBadge.svelte';
@@ -53,12 +54,12 @@
   
   <!-- Header with drag region -->
   <div class="sidebar-header drag-region">
-    <div class="logo no-drag">
+    <button class="logo no-drag" onclick={() => goto('/')}>
       <span class="logo-icon">🌿</span>
       {#if $sidebarOpen}
         <span class="logo-text">Canopy</span>
       {/if}
-    </div>
+    </button>
   </div>
   
   <!-- Tab Bar -->
@@ -178,10 +179,16 @@
   
   <!-- Footer -->
   <div class="sidebar-footer no-drag">
-    <button class="settings-btn" title="Settings" onclick={() => goto('/settings')}>
-      <span>⚙</span>
-      {#if $sidebarOpen}<span>Settings</span>{/if}
-    </button>
+    <div class="footer-buttons">
+      <button class="footer-btn" title="Data Inspector" onclick={() => inspectorOpen.toggle()}>
+        <span>⬡</span>
+        {#if $sidebarOpen}<span>Inspector</span>{/if}
+      </button>
+      <button class="footer-btn" title="Settings" onclick={() => goto('/settings')}>
+        <span>⚙</span>
+        {#if $sidebarOpen}<span>Settings</span>{/if}
+      </button>
+    </div>
     {#if user}
       <div class="user-profile">
         <img
@@ -259,6 +266,15 @@
     display: flex;
     align-items: center;
     gap: var(--space-sm);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+  }
+
+  .logo:hover {
+    opacity: 0.8;
   }
   
   .logo-icon {
@@ -490,8 +506,14 @@
     border-top: 1px solid var(--border);
   }
   
-  .settings-btn {
-    width: 100%;
+  .footer-buttons {
+    display: flex;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-sm);
+  }
+
+  .footer-btn {
+    flex: 1;
     display: flex;
     align-items: center;
     gap: var(--space-sm);
@@ -503,10 +525,14 @@
     cursor: pointer;
     font-size: 13px;
   }
-  
-  .settings-btn:hover {
+
+  .footer-btn:hover {
     background: var(--bg-tertiary);
     color: var(--text-primary);
+  }
+
+  .collapsed .footer-buttons {
+    flex-direction: column;
   }
 
   /* User Profile */

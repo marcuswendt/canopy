@@ -1,8 +1,10 @@
-// Time Plugin
-// Provides temporal context: time of day, timezone, date
+// System Plugin
+// Provides system context: time, timezone, date, location
 // Default plugin - always enabled
 
 import type { CanopyPlugin, IntegrationSignal } from '../types';
+import { userSettings, guessLocation } from '$lib/client/stores/settings';
+import { get } from 'svelte/store';
 
 // =============================================================================
 // HELPERS
@@ -25,16 +27,21 @@ function getFormattedTime(): string {
   });
 }
 
+function getUserLocation(): string {
+  const settings = get(userSettings);
+  return settings.location || guessLocation();
+}
+
 // =============================================================================
-// TIME PLUGIN
+// SYSTEM PLUGIN
 // =============================================================================
 
 export const timePlugin: CanopyPlugin = {
   // Identity
   id: 'time',
-  name: 'Time & Date',
-  description: 'Current time, timezone, and date context for Ray',
-  icon: '🕐',
+  name: 'System',
+  description: 'Time, timezone, date, and location context',
+  icon: '⚙',
   domains: ['personal'],
   category: 'context',
 
@@ -54,10 +61,11 @@ export const timePlugin: CanopyPlugin = {
   disconnect: async () => {},
   getLastSync: async () => new Date(),
 
-  // Generate temporal signal
+  // Generate temporal signal with location
   sync: async (): Promise<IntegrationSignal[]> => {
     const now = new Date();
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const location = getUserLocation();
 
     return [
       {
@@ -79,6 +87,7 @@ export const timePlugin: CanopyPlugin = {
           timezone,
           timeOfDay: getTimeOfDay(),
           isWeekend: now.getDay() === 0 || now.getDay() === 6,
+          location,
         },
       },
     ];

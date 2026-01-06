@@ -1050,13 +1050,10 @@
    * Shows all collected data for final approval before completing onboarding
    */
   function triggerSummaryReview() {
-    // Build review data from all collected entities and domains
-    const currentState = get(rayState);
-    const domainsFromState = currentState.lifeContext?.domains || [];
-
-    // Convert domains to the format expected by EntityCarousel
-    const domainData = domainsFromState.map(d => ({
-      type: d.type as 'work' | 'family' | 'sport' | 'personal' | 'health',
+    // Use collectedDomains which includes both Stage 1 extracted and AI-extracted domains
+    // This ensures domains from document extraction show up even if not yet saved to rayState
+    const domainData = collectedDomains.map(d => ({
+      type: d as 'work' | 'family' | 'sport' | 'personal' | 'health',
       description: undefined,
     }));
 
@@ -1070,36 +1067,106 @@
     showSummaryReview = true;
   }
 
-  // Handle entity confirmation in summary review (entity stays in DB - no action needed)
-  function handleSummaryConfirm(entity: { name: string; type: string; domain: string; description?: string; relationship?: string; priority?: string; date?: string }) {
-    // Entity is already in DB, just track it was confirmed
+  // Handle entity confirmation in summary review - create in DB (Bonsai Principle: nothing saved until confirmed)
+  async function handleSummaryConfirm(entity: { name: string; type: string; domain: string; description?: string; relationship?: string; priority?: string; date?: string }) {
+    // Add to recently added for notification
     recentlyAdded = [...recentlyAdded, { name: entity.name, type: entity.type }];
+
+    // Check if entity already exists in DB (avoid duplicates)
+    const alreadyExists = existingEntities.some(e =>
+      e.name.toLowerCase() === entity.name.toLowerCase()
+    );
+    if (alreadyExists) {
+      return; // Entity already persisted, just track confirmation
+    }
+
+    // Create the entity in the database
+    const typeMap: Record<string, 'person' | 'project' | 'event' | 'concept' | 'goal' | 'focus' | 'domain'> = {
+      person: 'person',
+      project: 'project',
+      company: 'project',
+      event: 'event',
+      goal: 'goal',
+      focus: 'focus',
+      domain: 'domain',
+    };
+
+    // Build description based on entity type
+    let description = entity.description || entity.relationship || '';
+    if (entity.type === 'goal' || entity.type === 'focus') {
+      const parts: string[] = [];
+      if (entity.priority) parts.push(`Priority: ${entity.priority}`);
+      if (entity.date) parts.push(`Target: ${entity.date}`);
+      if (description) parts.push(description);
+      description = parts.join(' | ');
+    } else if (entity.type === 'event' && entity.date) {
+      description = entity.date + (description ? ` | ${description}` : '');
+    }
+
+    // Handle domain entities specially
+    if (entity.type === 'domain') {
+      const domainLabels: Record<string, string> = {
+        work: 'Work & Career',
+        family: 'Family & Home',
+        sport: 'Sport & Fitness',
+        personal: 'Personal Projects',
+        health: 'Health & Wellness'
+      };
+      const created = await createEntity(
+        'domain',
+        domainLabels[entity.name] || entity.name,
+        entity.name as any
+      );
+      if (created?.id) {
+        await updateEntityMention(created.id);
+        existingEntities = [...existingEntities, created];
+      }
+      if (!collectedDomains.includes(entity.name)) {
+        collectedDomains = [...collectedDomains, entity.name];
+      }
+      rayState.addDomain({
+        id: entity.name,
+        name: domainLabels[entity.name] || entity.name,
+        type: entity.name as 'work' | 'family' | 'sport' | 'personal' | 'health',
+        entities: [],
+      });
+    } else {
+      const created = await createEntity(
+        typeMap[entity.type] || 'project',
+        entity.name,
+        (entity.domain || 'personal') as any,
+        description
+      );
+      if (created?.id) {
+        await updateEntityMention(created.id);
+        existingEntities = [...existingEntities, created];
+      }
+    }
   }
 
-  // Handle entity rejection in summary review - delete from database
+  // Handle entity rejection in summary review - remove from collected and delete from DB if exists
   async function handleSummaryReject(entity: { name: string; type: string; domain: string; description?: string }) {
-    // Find and delete the entity from the database
+    // Always remove from in-memory collected entities (for Stage 1 entities not yet in DB)
+    collectedEntities = collectedEntities.filter(e =>
+      e.name.toLowerCase() !== entity.name.toLowerCase()
+    );
+
+    // If entity was already saved to DB, delete it
     const toDelete = existingEntities.find(e =>
       e.name.toLowerCase() === entity.name.toLowerCase()
     );
     if (toDelete?.id) {
       try {
-        // Import deleteEntity if not already available
         const { deleteEntity } = await import('$lib/client/db/client');
         await deleteEntity(toDelete.id);
-        // Remove from local tracking
         existingEntities = existingEntities.filter(e => e.id !== toDelete.id);
-        collectedEntities = collectedEntities.filter(e =>
-          e.name.toLowerCase() !== entity.name.toLowerCase()
-        );
       } catch (err) {
         console.error('Failed to delete entity:', err);
       }
     }
 
-    // If it's a domain, remove from rayState
+    // If it's a domain, remove from rayState and collectedDomains
     if (entity.type === 'domain') {
-      // Remove domain from rayState
       const currentState = get(rayState);
       if (currentState.lifeContext?.domains) {
         rayState.update(s => ({

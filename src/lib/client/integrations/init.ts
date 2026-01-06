@@ -15,6 +15,9 @@ const DEFAULT_PLUGINS = ['time', 'weather'];
 // Individual integrations (WHOOP, Oura, etc.) are registered separately
 const ALL_PLUGINS = [timePlugin, weatherPlugin, whoopPlugin, googlePlugin];
 
+// Web-compatible plugins that don't need Electron APIs
+const WEB_COMPATIBLE_PLUGINS = ['time', 'weather'];
+
 /**
  * Initialize the plugin system
  * - Registers all plugins
@@ -23,14 +26,27 @@ const ALL_PLUGINS = [timePlugin, weatherPlugin, whoopPlugin, googlePlugin];
  * - Syncs default plugins
  */
 export async function initializePlugins(): Promise<void> {
-  // Check if we're in a browser with the Canopy API (Electron only)
-  if (typeof window === 'undefined' || !window.canopy) {
+  const isElectron = typeof window !== 'undefined' && window.canopy !== undefined;
+  const isWeb = typeof window !== 'undefined' && !isElectron;
+
+  // Register all plugins in both modes
+  for (const plugin of ALL_PLUGINS) {
+    registry.register(plugin);
+  }
+
+  // Web mode: enable and sync web-compatible plugins
+  if (isWeb) {
+    for (const pluginId of WEB_COMPATIBLE_PLUGINS) {
+      registry.updateState(pluginId, { enabled: true, connected: true });
+    }
+    // Sync web-compatible plugins
+    await Promise.allSettled(WEB_COMPATIBLE_PLUGINS.map((id) => syncPlugin(id)));
     return;
   }
 
-  // Register all plugins
-  for (const plugin of ALL_PLUGINS) {
-    registry.register(plugin);
+  // Electron mode: full initialization with database state
+  if (!isElectron) {
+    return;
   }
 
   try {

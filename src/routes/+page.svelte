@@ -7,6 +7,7 @@
 
   let inputValue = $state('');
   let inputFocused = $state(false);
+  let textareaEl: HTMLTextAreaElement;
 
   let recentItems = $derived($entitiesByRecency.slice(0, 5));
 
@@ -21,6 +22,18 @@
       handleSubmit();
     }
   }
+
+  function autoResize() {
+    if (textareaEl) {
+      textareaEl.style.height = 'auto';
+      textareaEl.style.height = Math.min(textareaEl.scrollHeight, 200) + 'px';
+    }
+  }
+
+  $effect(() => {
+    inputValue;
+    autoResize();
+  });
 
   function getGreeting(): string {
     const hour = new Date().getHours();
@@ -57,15 +70,17 @@
       </div>
       
       <div class="input-container">
-        <input
-          type="text"
+        <textarea
           placeholder="What's on your mind?"
           bind:value={inputValue}
+          bind:this={textareaEl}
           onfocus={() => inputFocused = true}
           onblur={() => inputFocused = false}
           onkeydown={handleKeydown}
+          oninput={autoResize}
+          rows="1"
           class="main-input"
-        />
+        ></textarea>
         
         <div class="input-actions">
           <button class="input-action" title="Attach file">
@@ -220,7 +235,7 @@
   .input-container {
     position: relative;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
   }
   
   .main-input {
@@ -228,6 +243,8 @@
     padding: var(--space-md) var(--space-lg);
     padding-right: 88px;
     font-size: 16px;
+    font-family: inherit;
+    line-height: 1.5;
     border: none;
     border-radius: var(--radius-lg);
     background: var(--card-bg);
@@ -236,6 +253,10 @@
       0 4px 24px var(--card-shadow),
       0 0 0 1px rgba(255, 255, 255, 0.1);
     transition: all var(--transition-base);
+    resize: none;
+    overflow-y: auto;
+    min-height: 52px;
+    max-height: 200px;
   }
 
   .main-input::placeholder {
@@ -252,6 +273,7 @@
   .input-actions {
     position: absolute;
     right: var(--space-sm);
+    top: 8px;
     display: flex;
     gap: 2px;
   }

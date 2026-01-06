@@ -71,8 +71,11 @@
     }
   });
 
-  // Don't show sidebar during onboarding
-  let showSidebar = $derived(!$page.url.pathname.includes('onboarding'));
+  // Don't show sidebar during onboarding or login
+  let showSidebar = $derived(
+    !$page.url.pathname.includes('onboarding') &&
+    !$page.url.pathname.includes('login')
+  );
 </script>
 
 <div class="app-container">

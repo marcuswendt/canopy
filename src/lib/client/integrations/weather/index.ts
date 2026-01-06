@@ -55,8 +55,7 @@ export const weatherPlugin: CanopyPlugin = {
 
   // Fetch weather and generate signal
   sync: async (): Promise<IntegrationSignal[]> => {
-    // Check if Electron API is available
-    if (typeof window === 'undefined' || !window.canopy?.getWeather) {
+    if (typeof window === 'undefined') {
       return [];
     }
 
@@ -66,9 +65,22 @@ export const weatherPlugin: CanopyPlugin = {
         return [];
       }
 
-      const weather = await window.canopy.getWeather(location);
+      let weather: WeatherData & { location: string; humidity: number; weatherCode: number };
 
-      if (weather.error) {
+      // Use Electron API if available, otherwise use web API
+      if (window.canopy?.getWeather) {
+        weather = await window.canopy.getWeather(location);
+      } else {
+        // Web mode: use API endpoint
+        const response = await fetch(`/api/weather?location=${encodeURIComponent(location)}`);
+        if (!response.ok) {
+          console.warn('Weather fetch failed:', response.status);
+          return [];
+        }
+        weather = await response.json();
+      }
+
+      if ('error' in weather) {
         console.warn('Weather fetch failed:', weather.error);
         return [];
       }
