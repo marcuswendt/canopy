@@ -119,14 +119,23 @@ export function addSuggestions(
 }
 
 /**
- * Confirm a suggestion - persist to database
+ * Result of confirming a suggestion - includes created entity if applicable
  */
-export async function confirmSuggestion(id: string): Promise<boolean> {
+export interface ConfirmResult {
+  success: boolean;
+  entity?: Entity;
+}
+
+/**
+ * Confirm a suggestion - persist to database
+ * Returns the created entity if applicable (for adding to context)
+ */
+export async function confirmSuggestion(id: string): Promise<ConfirmResult> {
   const currentList = get(suggestions);
   const suggestion = currentList.find(s => s.id === id);
 
   if (!suggestion || suggestion.status !== 'pending') {
-    return false;
+    return { success: false };
   }
 
   // Update status immediately for responsive UI
@@ -145,6 +154,7 @@ export async function confirmSuggestion(id: string): Promise<boolean> {
       );
       if (created?.id) {
         await updateEntityMention(created.id);
+        return { success: true, entity: created };
       }
     } else if (suggestion.type === 'memory' && suggestion.memory) {
       const importanceMap = { high: 0.9, medium: 0.6, low: 0.3 };
@@ -158,14 +168,14 @@ export async function confirmSuggestion(id: string): Promise<boolean> {
     }
     // Pattern suggestions handled differently (would create relationships)
 
-    return true;
+    return { success: true };
   } catch (error) {
     console.error('Failed to confirm suggestion:', error);
     // Revert status on error
     suggestions.update(list =>
       list.map(s => s.id === id ? { ...s, status: 'pending' as const } : s)
     );
-    return false;
+    return { success: false };
   }
 }
 

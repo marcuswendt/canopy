@@ -22,9 +22,9 @@
   import {
     suggestionsByMessage,
     addSuggestion,
-    confirmSuggestion,
+    confirmSuggestion as baseConfirmSuggestion,
     rejectSuggestion,
-    confirmAllForMessage,
+    confirmAllForMessage as baseConfirmAllForMessage,
     rejectAllForMessage,
     startCleanupInterval,
     stopCleanupInterval
@@ -73,6 +73,31 @@
   // Context management state
   let threadSummary = $state<string | undefined>(undefined);
   let summaryUpToIndex = $state(0);
+
+  // Wrapper for confirmSuggestion that adds confirmed entities to contextEntities
+  async function confirmSuggestion(id: string) {
+    const result = await baseConfirmSuggestion(id);
+    if (result.success && result.entity) {
+      // Add the newly confirmed entity to context if not already there
+      if (!contextEntities.find(e => e.id === result.entity!.id)) {
+        contextEntities = [...contextEntities, result.entity];
+        threadDomains.add(result.entity.domain);
+        threadDomains = threadDomains; // trigger reactivity
+      }
+    }
+    return result;
+  }
+
+  // Wrapper for confirmAllForMessage that adds all confirmed entities to contextEntities
+  async function confirmAllForMessage(messageId: string) {
+    // Get the suggestions before confirming
+    const msgSuggestions = $suggestionsByMessage.get(messageId) || [];
+
+    // Confirm each and collect entities
+    for (const suggestion of msgSuggestions) {
+      await confirmSuggestion(suggestion.id);
+    }
+  }
 
   onMount(async () => {
     // Start suggestion cleanup interval (Bonsai system)
