@@ -510,7 +510,10 @@
               class="input-action"
               class:active={showFileUpload}
               title="Attach files"
-              onclick={() => showFileUpload = !showFileUpload}
+              onclick={() => {
+                showFileUpload = !showFileUpload;
+                console.log('[Chat] File upload toggled:', showFileUpload);
+              }}
             >📎</button>
             <button class="input-action" title="Voice">🎤</button>
             <button class="send-btn" onclick={sendMessage} disabled={!inputValue.trim() || isLoading}>
