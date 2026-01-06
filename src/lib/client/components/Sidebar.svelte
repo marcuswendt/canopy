@@ -1,10 +1,20 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
+  import { signOut } from '@auth/sveltekit/client';
   import { sidebarOpen, sidebarTab, pinnedItems, formatTimeAgo } from '$lib/client/stores/ui';
   import { entities, entitiesByDomain } from '$lib/client/stores/entities';
   import { getRecentThreads } from '$lib/client/db/client';
   import DomainBadge from './DomainBadge.svelte';
   import { onMount } from 'svelte';
+
+  // Get user session
+  let session = $derived($page.data.session);
+  let user = $derived(session?.user);
+
+  async function handleSignOut() {
+    await signOut({ redirectTo: '/login' });
+  }
 
   // Tab configuration
   const tabs = [
@@ -168,10 +178,27 @@
   
   <!-- Footer -->
   <div class="sidebar-footer no-drag">
-    <button class="settings-btn" title="Settings">
+    <button class="settings-btn" title="Settings" onclick={() => goto('/settings')}>
       <span>⚙</span>
       {#if $sidebarOpen}<span>Settings</span>{/if}
     </button>
+    {#if user}
+      <div class="user-profile">
+        <img
+          src={user.image}
+          alt={user.name || 'User'}
+          class="user-avatar"
+        />
+        {#if $sidebarOpen}
+          <div class="user-info">
+            <span class="user-name">{user.name}</span>
+          </div>
+          <button class="signout-btn" onclick={handleSignOut} title="Sign out">
+            ↪
+          </button>
+        {/if}
+      </div>
+    {/if}
   </div>
 </aside>
 
@@ -478,6 +505,59 @@
   }
   
   .settings-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  /* User Profile */
+  .user-profile {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+    border-radius: var(--radius-sm);
+  }
+
+  .user-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-full);
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+
+  .user-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .user-name {
+    font-size: 13px;
+    color: var(--text-primary);
+    font-weight: 500;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .signout-btn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 14px;
+    flex-shrink: 0;
+    transition: all var(--transition-fast);
+  }
+
+  .signout-btn:hover {
     background: var(--bg-tertiary);
     color: var(--text-primary);
   }

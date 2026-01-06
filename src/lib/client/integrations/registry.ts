@@ -71,8 +71,6 @@ class PluginRegistry {
       }
       return states;
     });
-    
-    console.log(`Registered plugin: ${plugin.name}`);
   }
   
   // Get a plugin by ID

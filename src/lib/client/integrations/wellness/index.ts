@@ -88,7 +88,6 @@ export const wellnessPlugin: CanopyPlugin = {
   connect: async () => {
     // This is called when the plugin is enabled
     // Individual provider connections are handled separately
-    console.log('Wellness plugin enabled. Connect individual providers in settings.');
   },
 
   disconnect: async () => {
