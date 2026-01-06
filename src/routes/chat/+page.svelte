@@ -58,6 +58,7 @@
   let messagesContainer: HTMLDivElement;
   let memoryPromptDismissed = $state(false);
   let memoryPromptSaving = $state(false);
+  let userScrolledUp = $state(false);
 
   // Pending entity suggestions (not yet confirmed)
   let pendingEntitySuggestions = $derived(
@@ -66,16 +67,46 @@
       .filter(s => !contextEntities.find(e => e.name === s.entity!.name))
   );
 
-  // Auto-scroll to bottom when messages change
+  // Check if user is near the bottom of the messages
+  function isNearBottom(): boolean {
+    if (!messagesContainer) return true;
+    const threshold = 100; // pixels from bottom
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainer;
+    return scrollHeight - scrollTop - clientHeight < threshold;
+  }
+
+  // Handle scroll events to detect when user scrolls up
+  function handleMessagesScroll() {
+    if (isNearBottom()) {
+      userScrolledUp = false;
+    } else if (isLoading || streamingContent) {
+      // Only mark as "scrolled up" during active streaming/loading
+      userScrolledUp = true;
+    }
+  }
+
+  // Auto-scroll to bottom when messages change (only if user hasn't scrolled up)
   $effect(() => {
     // Track dependencies
     messages.length;
     streamingContent;
-    // Scroll after DOM update
-    if (messagesContainer) {
+    // Scroll after DOM update, but respect user scroll position
+    if (messagesContainer && !userScrolledUp) {
       requestAnimationFrame(() => {
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
       });
+    }
+  });
+
+  // Reset userScrolledUp when streaming ends
+  $effect(() => {
+    if (!isLoading && !streamingContent) {
+      // After a short delay, allow auto-scroll again for next message
+      setTimeout(() => {
+        if (isNearBottom()) {
+          userScrolledUp = false;
+        }
+      }, 100);
     }
   });
 
@@ -420,66 +451,6 @@
     }
   }
 
-  /**
-   * Save a pattern memory when user clicks "Yes, remember this"
-   * Summarizes the conversation themes and entities discussed
-   */
-  async function savePatternMemory() {
-    if (memoryPromptSaving || !threadId) return;
-
-    memoryPromptSaving = true;
-
-    try {
-      // Build a summary of the conversation pattern
-      const domains = [...threadDomains];
-      const entityNames = contextEntities.map(e => e.name);
-
-      // Create a pattern description based on what was discussed
-      let patternContent = 'Pattern noted: ';
-
-      if (domains.length > 1) {
-        patternContent += `Cross-domain discussion connecting ${domains.join(', ')}. `;
-      } else if (domains.length === 1) {
-        patternContent += `Focus on ${domains[0]}. `;
-      }
-
-      if (entityNames.length > 0) {
-        patternContent += `Involves: ${entityNames.join(', ')}.`;
-      }
-
-      // If we have specific themes, add them
-      if (domains.includes('work') && domains.includes('family')) {
-        patternContent = 'Pattern noted: The interplay between work and family life - tracking how these domains interact and affect each other.';
-      } else if (domains.includes('sport') && domains.includes('work')) {
-        patternContent = 'Pattern noted: Balancing athletic training with professional responsibilities - how these priorities compete and complement each other.';
-      }
-
-      // Add entity context if available
-      if (entityNames.length > 0) {
-        patternContent += ` Key entities: ${entityNames.join(', ')}.`;
-      }
-
-      await createMemory(
-        patternContent,
-        'thread',
-        threadId,
-        contextEntities.map(e => e.id),
-        0.8 // High importance for user-confirmed patterns
-      );
-
-      memoryPromptDismissed = true;
-      console.log('Pattern memory saved:', patternContent);
-    } catch (err) {
-      console.error('Failed to save pattern memory:', err);
-    } finally {
-      memoryPromptSaving = false;
-    }
-  }
-
-  function dismissMemoryPrompt() {
-    memoryPromptDismissed = true;
-  }
-
   onDestroy(() => {
     // Clean up active stream
     if (activeStream) {
@@ -503,7 +474,7 @@
   
   <div class="chat-body">
     <div class="messages-area">
-      <div class="messages" bind:this={messagesContainer}>
+      <div class="messages" bind:this={messagesContainer} onscroll={handleMessagesScroll}>
         {#each messages as message (message.id)}
           <div class="message {message.role}">
             {#if message.role === 'user'}
@@ -542,23 +513,7 @@
           </div>
         {/if}
       </div>
-      
-      {#if messages.length >= 4 && !isLoading && !memoryPromptDismissed && threadDomains.size >= 2}
-        <div class="memory-prompt animate-fade-in">
-          <p>Want me to remember this pattern? {#if threadDomains.has('work') && threadDomains.has('family')}The interplay between work and family seems worth tracking.{:else if threadDomains.has('sport') && threadDomains.has('work')}The balance between training and work seems worth tracking.{:else}The connection between {[...threadDomains].join(' and ')} seems worth tracking.{/if}</p>
-          <div class="memory-actions">
-            <button
-              class="memory-btn primary"
-              onclick={savePatternMemory}
-              disabled={memoryPromptSaving}
-            >
-              {memoryPromptSaving ? 'Saving...' : 'Yes, remember this'}
-            </button>
-            <button class="memory-btn" onclick={dismissMemoryPrompt}>Not now</button>
-          </div>
-        </div>
-      {/if}
-      
+
       <div class="input-area">
         <ChatInputArea
           bind:this={chatInputRef}

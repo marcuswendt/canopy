@@ -1,12 +1,16 @@
 <script lang="ts">
   import { uploads, pendingUploads, completedUploads, isImage, type FileUpload } from '$lib/client/uploads';
+  import Markdown from './Markdown.svelte';
 
   interface Props {
     showSuggestions?: boolean;
   }
 
   let { showSuggestions = true }: Props = $props();
-  
+
+  // Track which markdown files are expanded
+  let expandedPreviews = $state<Set<string>>(new Set());
+
   function formatSize(bytes: number): string {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -14,16 +18,30 @@
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
-  
+
   function getIcon(upload: FileUpload): string {
     if (upload.source === 'url') return '🔗';
     if (isImage(upload.mimeType)) return '📷';
     if (upload.mimeType.includes('pdf')) return '📕';
     if (upload.mimeType.includes('word') || upload.mimeType.includes('document')) return '📄';
     if (upload.mimeType.includes('sheet') || upload.mimeType.includes('csv')) return '📊';
+    if (upload.filename.endsWith('.md') || upload.mimeType === 'text/markdown') return '📝';
     return '📁';
   }
-  
+
+  function isMarkdownFile(upload: FileUpload): boolean {
+    return upload.filename.endsWith('.md') || upload.mimeType === 'text/markdown';
+  }
+
+  function togglePreview(id: string) {
+    if (expandedPreviews.has(id)) {
+      expandedPreviews.delete(id);
+    } else {
+      expandedPreviews.add(id);
+    }
+    expandedPreviews = expandedPreviews; // trigger reactivity
+  }
+
   function removeUpload(id: string) {
     uploads.remove(id);
   }
@@ -47,20 +65,39 @@
             <span class="file-url">{upload.originalUrl}</span>
           {/if}
         </div>
-        
-        <div class="file-status">
-          {#if upload.status === 'processing'}
-            <span class="status processing">Processing...</span>
-          {:else if upload.status === 'complete'}
-            <span class="status complete">✓</span>
-          {:else if upload.status === 'failed'}
-            <span class="status failed">Failed</span>
+
+        <div class="file-actions">
+          {#if isMarkdownFile(upload) && upload.textContent}
+            <button
+              class="preview-btn"
+              class:expanded={expandedPreviews.has(upload.id)}
+              onclick={() => togglePreview(upload.id)}
+              title={expandedPreviews.has(upload.id) ? 'Hide preview' : 'Show preview'}
+            >
+              {expandedPreviews.has(upload.id) ? '▼' : '▶'}
+            </button>
           {/if}
+
+          <div class="file-status">
+            {#if upload.status === 'processing'}
+              <span class="status processing">Processing...</span>
+            {:else if upload.status === 'complete'}
+              <span class="status complete">✓</span>
+            {:else if upload.status === 'failed'}
+              <span class="status failed">Failed</span>
+            {/if}
+          </div>
+
+          <button class="remove-btn" onclick={() => removeUpload(upload.id)}>×</button>
         </div>
-        
-        <button class="remove-btn" onclick={() => removeUpload(upload.id)}>×</button>
       </div>
-      
+
+      {#if isMarkdownFile(upload) && upload.textContent && expandedPreviews.has(upload.id)}
+        <div class="markdown-preview">
+          <Markdown content={upload.textContent} />
+        </div>
+      {/if}
+
       {#if showSuggestions && upload.status === 'complete' && upload.extracted?.entities?.length}
         <div class="extracted-entities">
           <span class="extracted-label">Found:</span>
@@ -104,7 +141,68 @@
     border-color: var(--domain-health);
     background: var(--domain-health-bg);
   }
-  
+
+  .file-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    flex-shrink: 0;
+  }
+
+  .preview-btn {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 10px;
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+  }
+
+  .preview-btn:hover {
+    background: var(--accent-muted);
+    color: var(--accent);
+  }
+
+  .preview-btn.expanded {
+    background: var(--accent-muted);
+    color: var(--accent);
+  }
+
+  .markdown-preview {
+    padding: var(--space-md);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    margin-top: -1px;
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 13px;
+  }
+
+  .markdown-preview :global(.markdown) {
+    font-size: 13px;
+  }
+
+  .markdown-preview :global(h1) {
+    font-size: 18px;
+    margin-top: 0;
+  }
+
+  .markdown-preview :global(h2) {
+    font-size: 16px;
+  }
+
+  .markdown-preview :global(h3) {
+    font-size: 14px;
+  }
+
   .file-icon {
     font-size: 18px;
     flex-shrink: 0;
