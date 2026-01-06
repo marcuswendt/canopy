@@ -34,10 +34,9 @@
   import type { Entity, Message, Thread, Memory } from '$lib/client/db/types';
   import type { ReferenceContext } from '$lib/reference/types';
   import DomainBadge from '$lib/client/components/DomainBadge.svelte';
-  import MentionInput from '$lib/client/components/MentionInput.svelte';
   import ArtifactPanel from '$lib/client/components/ArtifactPanel.svelte';
   import Markdown from '$lib/client/components/Markdown.svelte';
-  import UploadedFiles from '$lib/client/components/UploadedFiles.svelte';
+  import ChatInputArea from '$lib/client/components/ChatInputArea.svelte';
   import { loadArtifacts } from '$lib/client/stores/artifacts';
   import { uploads, completedUploads, type FileUpload } from '$lib/client/uploads';
   import { userSettings } from '$lib/client/stores/settings';
@@ -52,12 +51,11 @@
   let threadDomains = $state<Set<string>>(new Set());
   let activeStream: { cancel: () => void } | null = null;
   let explicitMentions = $state<Entity[]>([]);
-  let mentionInputRef: MentionInput;
+  let chatInputRef: ChatInputArea;
   let showArtifacts = $state(true);
   let messagesContainer: HTMLDivElement;
   let memoryPromptDismissed = $state(false);
   let memoryPromptSaving = $state(false);
-  let fileInputRef: HTMLInputElement;
 
   // Auto-scroll to bottom when messages change
   $effect(() => {
@@ -115,13 +113,36 @@
   });
   
   async function sendMessage() {
-    if (!inputValue.trim() || isLoading) return;
+    // Get current uploads before clearing
+    const currentUploads = $completedUploads;
+    const hasFiles = currentUploads.length > 0;
 
-    const content = inputValue;
+    // Allow sending if there's text OR files
+    if (!inputValue.trim() && !hasFiles) return;
+    if (isLoading) return;
+
+    // Build content including any attached files
+    let content = inputValue;
+    if (hasFiles) {
+      const fileContents = currentUploads.map(upload => {
+        // Get the best available content for this file
+        const text = upload.textContent || upload.extracted?.text || upload.extracted?.summary;
+        if (text) {
+          return `\n\n---\n**Attached file: ${upload.filename}**\n${text}\n---`;
+        }
+        return `\n\n[Attached file: ${upload.filename} (${upload.mimeType})]`;
+      }).join('\n');
+
+      content = content + fileContents;
+
+      // Clear uploads after capturing content
+      uploads.clear();
+    }
+
     const currentExplicitMentions = [...explicitMentions];
     inputValue = '';
     explicitMentions = [];
-    mentionInputRef?.clear();
+    chatInputRef?.clear();
     isLoading = true;
 
     if (!threadId) {
@@ -477,55 +498,17 @@
       {/if}
       
       <div class="input-area">
-        <UploadedFiles showSuggestions={false} />
-
-        <div class="input-container">
-          <MentionInput
-            bind:this={mentionInputRef}
-            bind:value={inputValue}
-            placeholder="What's on your mind... (use @ to mention entities)"
-            disabled={isLoading}
-            onsubmit={sendMessage}
-            onchange={(_, mentions) => { explicitMentions = mentions; }}
-          />
-          <div class="input-actions">
-            <input
-              bind:this={fileInputRef}
-              type="file"
-              multiple
-              style="position: absolute; opacity: 0; pointer-events: none;"
-              onchange={(e) => {
-                const input = e.target as HTMLInputElement;
-                const files = Array.from(input.files || []);
-                console.log('[Chat] Files selected:', files.length);
-                for (const file of files) {
-                  uploads.add({
-                    filename: file.name,
-                    mimeType: file.type,
-                    size: file.size,
-                    localPath: '',
-                    source: 'drop',
-                    file: file,
-                  });
-                }
-                input.value = '';
-              }}
-            />
-            <button
-              type="button"
-              class="input-action"
-              title="Attach files"
-              onclick={() => {
-                console.log('[Chat] Attach clicked, ref:', fileInputRef);
-                fileInputRef?.click();
-              }}
-            >📎</button>
-            <button type="button" class="input-action" title="Voice">🎤</button>
-            <button class="send-btn" onclick={sendMessage} disabled={!inputValue.trim() || isLoading}>
-              Send
-            </button>
-          </div>
-        </div>
+        <ChatInputArea
+          bind:this={chatInputRef}
+          bind:value={inputValue}
+          placeholder="What's on your mind... (use @ to mention entities)"
+          disabled={isLoading}
+          showMentions={true}
+          showVoice={true}
+          showFiles={true}
+          onsubmit={sendMessage}
+          onmentionsChange={(mentions) => { explicitMentions = mentions; }}
+        />
       </div>
     </div>
     

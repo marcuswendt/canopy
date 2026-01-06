@@ -3,11 +3,13 @@
   import { theme, formatTimeAgo } from '$lib/client/stores/ui';
   import { entitiesByRecency } from '$lib/client/stores/entities';
   import { getRecencyScore } from '$lib/client/db/client';
+  import { uploads } from '$lib/client/uploads';
   import DomainBadge from '$lib/client/components/DomainBadge.svelte';
 
   let inputValue = $state('');
   let inputFocused = $state(false);
   let textareaEl: HTMLTextAreaElement;
+  let fileInputRef: HTMLInputElement;
 
   let recentItems = $derived($entitiesByRecency.slice(0, 5));
 
@@ -82,8 +84,31 @@
           class="main-input"
         ></textarea>
         
+        <input
+          bind:this={fileInputRef}
+          type="file"
+          multiple
+          style="position: absolute; opacity: 0; pointer-events: none;"
+          onchange={(e) => {
+            const input = e.target as HTMLInputElement;
+            const files = Array.from(input.files || []);
+            for (const file of files) {
+              uploads.add({
+                filename: file.name,
+                mimeType: file.type,
+                size: file.size,
+                localPath: '',
+                source: 'drop',
+                file: file,
+              });
+            }
+            input.value = '';
+            // Navigate to chat with files attached
+            goto('/chat');
+          }}
+        />
         <div class="input-actions">
-          <button class="input-action" title="Attach file">
+          <button class="input-action" title="Attach file" onclick={() => fileInputRef?.click()}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>

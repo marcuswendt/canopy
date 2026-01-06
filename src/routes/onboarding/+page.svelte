@@ -23,14 +23,12 @@
   const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/gi;
   import PlatformInput from '$lib/client/components/PlatformInput.svelte';
   import FileDropZone from '$lib/client/components/FileDropZone.svelte';
-  import UploadedFiles from '$lib/client/components/UploadedFiles.svelte';
-  import VoiceInput from '$lib/client/components/VoiceInput.svelte';
   import Markdown from '$lib/client/components/Markdown.svelte';
   import { uploads, completedUploads, type FileUpload } from '$lib/client/uploads';
   import { getAvailableIntegrations } from '$lib/client/integrations/init';
   import { connectPlugin, pluginStates } from '$lib/client/integrations/registry';
   import StructuredInput, { type FieldConfig } from '$lib/client/components/StructuredInput.svelte';
-  import MentionInput from '$lib/client/components/MentionInput.svelte';
+  import ChatInputArea from '$lib/client/components/ChatInputArea.svelte';
   import EntityCarousel from '$lib/client/components/onboarding/EntityCarousel.svelte';
   import ConfirmationNotification from '$lib/client/components/onboarding/ConfirmationNotification.svelte';
   import CompletionSummary from '$lib/client/components/onboarding/CompletionSummary.svelte';
@@ -1557,45 +1555,23 @@
             </div>
           {/if}
 
-          <UploadedFiles showSuggestions={true} />
-
           {#if voiceError}
             <div class="voice-error">{voiceError}</div>
           {/if}
 
-          <div class="input-area">
-            <button
-              class="input-action-btn"
-              onclick={toggleFileDropZone}
-              title="Add files or images"
-              disabled={isProcessing}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
-              </svg>
-            </button>
-
-            <MentionInput
-              bind:value={inputValue}
-              placeholder="Type, speak, or drop files..."
-              disabled={isProcessing}
-              onsubmit={handleSubmit}
-            />
-
-            <VoiceInput
-              disabled={isProcessing}
-              onresult={handleVoiceResult}
-              onerror={handleVoiceError}
-            />
-
-            <button
-              class="submit-btn"
-              onclick={handleSubmit}
-              disabled={!inputValue.trim() || isProcessing}
-            >
-              →
-            </button>
-          </div>
+          <ChatInputArea
+            bind:value={inputValue}
+            placeholder="Type, speak, or drop files..."
+            disabled={isProcessing}
+            showMentions={true}
+            showVoice={true}
+            showFiles={true}
+            showUploadedFiles={true}
+            onsubmit={handleSubmit}
+            onfileButtonClick={toggleFileDropZone}
+            onvoiceError={handleVoiceError}
+            onfilesAdded={handleFilesAdded}
+          />
 
           <p class="input-hint">
             You can type, use voice, or drop photos and documents
