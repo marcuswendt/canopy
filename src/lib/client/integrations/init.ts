@@ -23,13 +23,10 @@ const ALL_PLUGINS = [timePlugin, weatherPlugin, whoopPlugin, googlePlugin];
  * - Syncs default plugins
  */
 export async function initializePlugins(): Promise<void> {
-  // Check if we're in a browser with the Canopy API
+  // Check if we're in a browser with the Canopy API (Electron only)
   if (typeof window === 'undefined' || !window.canopy) {
-    console.warn('Plugin initialization skipped: no Canopy API');
     return;
   }
-
-  console.log('Initializing plugin system...');
 
   // Register all plugins
   for (const plugin of ALL_PLUGINS) {
@@ -53,7 +50,6 @@ export async function initializePlugins(): Promise<void> {
           connected: true,
         });
         registry.updateState(pluginId, { enabled: true, connected: true });
-        console.log(`Enabled default plugin: ${pluginId}`);
       } else {
         // Restore saved state
         registry.updateState(pluginId, {
@@ -78,10 +74,7 @@ export async function initializePlugins(): Promise<void> {
     }
 
     // Initial sync for default plugins
-    console.log('Running initial sync for default plugins...');
     await Promise.allSettled(DEFAULT_PLUGINS.map((id) => syncPlugin(id)));
-
-    console.log('Plugin system initialized');
   } catch (error) {
     console.error('Failed to initialize plugins:', error);
   }

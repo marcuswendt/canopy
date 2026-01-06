@@ -104,6 +104,13 @@
   let recentlyAdded = $state<{ name: string; type: string }[]>([]);
   let carouselConfirmedEntities = $state<{ name: string; type: string; domain?: string; relationship?: string }[]>([]);
 
+  // Summary review state (final approval before completing onboarding)
+  let showSummaryReview = $state(false);
+  let summaryReviewData = $state<{
+    entities: { name: string; type: string; domain: string; description?: string; relationship?: string; priority?: string; date?: string }[];
+    domains: { type: 'work' | 'family' | 'sport' | 'personal' | 'health'; description?: string }[];
+  } | null>(null);
+
   // Integration picker state
   let showIntegrationPicker = $state(false);
   let selectedIntegrations = $state<string[]>([]);
@@ -697,10 +704,10 @@
       }
     }
 
-    // Check if onboarding is complete
+    // Check if onboarding is complete - show summary review for approval
     if (response.isComplete && !showIntegrationPicker) {
       await new Promise(r => setTimeout(r, 600));
-      await finishOnboardingWithSummary();
+      triggerSummaryReview();
     }
     } catch (err) {
       console.error('Onboarding conversation error:', err);
@@ -887,10 +894,10 @@
     // Show AI's next question
     addRayMessage(response.response);
 
-    // Check if onboarding is complete
+    // Check if onboarding is complete - show summary review for approval
     if (response.isComplete) {
       await new Promise(r => setTimeout(r, 600));
-      await finishOnboardingWithSummary();
+      triggerSummaryReview();
     }
   }
 
@@ -1034,7 +1041,85 @@
     carouselComplete = false;
     carouselConfirmedEntities = [];
     recentlyAdded = [];
-    await finishOnboardingWithSummary();
+    // Show final summary review for approval (Bonsai Principle)
+    triggerSummaryReview();
+  }
+
+  /**
+   * Trigger the summary review carousel (Bonsai Principle)
+   * Shows all collected data for final approval before completing onboarding
+   */
+  function triggerSummaryReview() {
+    // Build review data from all collected entities and domains
+    const currentState = get(rayState);
+    const domainsFromState = currentState.lifeContext?.domains || [];
+
+    // Convert domains to the format expected by EntityCarousel
+    const domainData = domainsFromState.map(d => ({
+      type: d.type as 'work' | 'family' | 'sport' | 'personal' | 'health',
+      description: undefined,
+    }));
+
+    // Use collected entities (already filtered for duplicates)
+    summaryReviewData = {
+      entities: collectedEntities,
+      domains: domainData,
+    };
+
+    addRayMessage("Here's what I learned about your life. Let's make sure I got it right.");
+    showSummaryReview = true;
+  }
+
+  // Handle entity confirmation in summary review (entity stays in DB - no action needed)
+  function handleSummaryConfirm(entity: { name: string; type: string; domain: string; description?: string; relationship?: string; priority?: string; date?: string }) {
+    // Entity is already in DB, just track it was confirmed
+    recentlyAdded = [...recentlyAdded, { name: entity.name, type: entity.type }];
+  }
+
+  // Handle entity rejection in summary review - delete from database
+  async function handleSummaryReject(entity: { name: string; type: string; domain: string; description?: string }) {
+    // Find and delete the entity from the database
+    const toDelete = existingEntities.find(e =>
+      e.name.toLowerCase() === entity.name.toLowerCase()
+    );
+    if (toDelete?.id) {
+      try {
+        // Import deleteEntity if not already available
+        const { deleteEntity } = await import('$lib/client/db/client');
+        await deleteEntity(toDelete.id);
+        // Remove from local tracking
+        existingEntities = existingEntities.filter(e => e.id !== toDelete.id);
+        collectedEntities = collectedEntities.filter(e =>
+          e.name.toLowerCase() !== entity.name.toLowerCase()
+        );
+      } catch (err) {
+        console.error('Failed to delete entity:', err);
+      }
+    }
+
+    // If it's a domain, remove from rayState
+    if (entity.type === 'domain') {
+      // Remove domain from rayState
+      const currentState = get(rayState);
+      if (currentState.lifeContext?.domains) {
+        rayState.update(s => ({
+          ...s,
+          lifeContext: {
+            ...s.lifeContext!,
+            domains: s.lifeContext!.domains.filter(d => d.type !== entity.name),
+          }
+        }));
+      }
+      collectedDomains = collectedDomains.filter(d => d !== entity.name);
+    }
+  }
+
+  // Handle summary review completion
+  function handleSummaryReviewComplete() {
+    showSummaryReview = false;
+    summaryReviewData = null;
+    // Now finish onboarding with the approved data
+    finishOnboardingWithSummary();
   }
 
   async function finishOnboardingWithSummary() {
@@ -1281,6 +1366,17 @@
           extractedDomains={documentExtraction.domains}
           onConfirm={handleCarouselConfirm}
           onComplete={handleCarouselComplete}
+        />
+      {/if}
+
+      <!-- Summary Review Carousel (final approval before completing - Bonsai Principle) -->
+      {#if showSummaryReview && summaryReviewData}
+        <EntityCarousel
+          extractedEntities={summaryReviewData.entities}
+          extractedDomains={summaryReviewData.domains}
+          onConfirm={handleSummaryConfirm}
+          onReject={handleSummaryReject}
+          onComplete={handleSummaryReviewComplete}
         />
       {/if}
 

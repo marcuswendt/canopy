@@ -36,7 +36,7 @@ class ReferenceRegistry {
   // Register a plugin
   register(plugin: ReferencePlugin): void {
     this.plugins.set(plugin.id, plugin);
-    
+
     // Initialize state
     this.stateStore.update(states => {
       if (!states.has(plugin.id)) {
@@ -49,8 +49,6 @@ class ReferenceRegistry {
       }
       return states;
     });
-    
-    console.log(`Registered reference plugin: ${plugin.name}`);
   }
   
   // Get plugin by ID

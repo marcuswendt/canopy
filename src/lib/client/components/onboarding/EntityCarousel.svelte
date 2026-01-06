@@ -23,10 +23,11 @@
     extractedEntities: ExtractedEntity[];
     extractedDomains: ExtractedDomain[];
     onConfirm: (entity: ExtractedEntity) => void;
+    onReject?: (entity: ExtractedEntity) => void;
     onComplete: () => void;
   }
 
-  let { extractedEntities, extractedDomains, onConfirm, onComplete }: Props = $props();
+  let { extractedEntities, extractedDomains, onConfirm, onReject, onComplete }: Props = $props();
 
   // Step configuration
   type StepType = 'spaces' | 'people' | 'projects' | 'goals' | 'focuses' | 'events';
@@ -108,6 +109,11 @@
 
   // Handle individual entity rejection (just remove from pending)
   function handleReject(entity: ExtractedEntity) {
+    // Call onReject callback if provided (used for deleting from DB in summary review)
+    if (onReject) {
+      onReject(entity);
+    }
+
     if (currentStep === 'spaces') {
       pendingDomains = pendingDomains.filter(d => d.type !== entity.name);
     } else {
