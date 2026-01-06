@@ -150,11 +150,15 @@
       checkingApiKey = false;
 
       if (hasKey) {
-        // Load existing entities for duplicate detection
-        existingEntities = await getEntities();
         // Start fresh onboarding
         currentPhase = 'welcome';
         addRayMessage(RAY_VOICE.onboarding.welcome);
+        // Load existing entities for duplicate detection (don't block on this)
+        try {
+          existingEntities = await getEntities();
+        } catch (e) {
+          console.log('Could not load entities:', e);
+        }
       } else {
         // Server doesn't have API key configured - show error
         apiKeyError = 'Claude API is not configured on this server. Please contact the administrator.';

@@ -23,18 +23,7 @@ function getClient(): Anthropic | null {
 
 export const GET: RequestHandler = async () => {
   // Health check - returns whether API key is configured
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  const hasKey = !!apiKey;
-  const keyPrefix = apiKey ? apiKey.substring(0, 10) + '...' : 'not set';
-
-  // Debug: log all env var keys that contain 'ANTHROP' or 'CLAUDE'
-  const relevantKeys = Object.keys(process.env).filter(
-    k => k.includes('ANTHROP') || k.includes('CLAUDE') || k.includes('API')
-  );
-
-  console.log('Claude API check:', { hasKey, keyPrefix, relevantKeys });
-
-  return json({ configured: hasKey, debug: { keyPrefix, relevantKeys } });
+  return json({ configured: !!process.env.ANTHROPIC_API_KEY });
 };
 
 export const POST: RequestHandler = async (event) => {

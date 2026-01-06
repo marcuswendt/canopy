@@ -27,29 +27,20 @@ export class ClaudeWebProvider implements AIProvider {
   private configuredCache: boolean | null = null;
 
   async isConfigured(): Promise<boolean> {
-    console.log('[claude-web] isConfigured called, isBrowser:', isBrowser);
     if (!isBrowser) return false;
 
     // Cache the result to avoid repeated API calls
     if (this.configuredCache !== null) {
-      console.log('[claude-web] returning cached result:', this.configuredCache);
       return this.configuredCache;
     }
 
     try {
-      console.log('[claude-web] fetching /api/claude...');
       const response = await fetch('/api/claude');
-      console.log('[claude-web] response status:', response.status);
-      if (!response.ok) {
-        console.log('[claude-web] response not ok');
-        return false;
-      }
+      if (!response.ok) return false;
       const data = await response.json();
-      console.log('[claude-web] response data:', data);
       this.configuredCache = data.configured === true;
       return this.configuredCache;
-    } catch (err) {
-      console.error('[claude-web] fetch error:', err);
+    } catch {
       return false;
     }
   }
