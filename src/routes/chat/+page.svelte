@@ -488,30 +488,34 @@
             onchange={(_, mentions) => { explicitMentions = mentions; }}
           />
           <div class="input-actions">
+            <input
+              type="file"
+              id="chat-file-upload"
+              multiple
+              style="display: none;"
+              onchange={(e) => {
+                const input = e.target as HTMLInputElement;
+                const files = Array.from(input.files || []);
+                for (const file of files) {
+                  uploads.add({
+                    filename: file.name,
+                    mimeType: file.type,
+                    size: file.size,
+                    localPath: '',
+                    source: 'drop',
+                    file: file,
+                  });
+                }
+                input.value = '';
+              }}
+            />
             <button
+              type="button"
               class="input-action"
               title="Attach files"
-              onclick={() => {
-                const input = document.createElement('input');
-                input.type = 'file';
-                input.multiple = true;
-                input.onchange = (e) => {
-                  const files = Array.from((e.target as HTMLInputElement).files || []);
-                  for (const file of files) {
-                    uploads.add({
-                      filename: file.name,
-                      mimeType: file.type,
-                      size: file.size,
-                      localPath: '',
-                      source: 'drop',
-                      file: file,
-                    });
-                  }
-                };
-                input.click();
-              }}
+              onclick={() => document.getElementById('chat-file-upload')?.click()}
             >📎</button>
-            <button class="input-action" title="Voice">🎤</button>
+            <button type="button" class="input-action" title="Voice">🎤</button>
             <button class="send-btn" onclick={sendMessage} disabled={!inputValue.trim() || isLoading}>
               Send
             </button>
