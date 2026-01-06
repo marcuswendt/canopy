@@ -1,9 +1,27 @@
 <script lang="ts">
   import { signIn } from '@auth/sveltekit/client';
+  import { goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import { onMount } from 'svelte';
 
   // Check for error from callback
   let error = $derived($page.url.searchParams.get('error'));
+
+  // Redirect if already logged in
+  let session = $derived($page.data.session);
+
+  onMount(() => {
+    if (session?.user) {
+      goto('/');
+    }
+  });
+
+  // Also watch for session changes
+  $effect(() => {
+    if (session?.user) {
+      goto('/');
+    }
+  });
 </script>
 
 <div class="login-container">
