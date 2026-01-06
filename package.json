@@ -14,19 +14,20 @@
   "license": "UNLICENSED",
   "private": true,
   "type": "module",
-  "main": "src/electron/main.js",
+  "main": "dist-electron/main.cjs",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "build:main": "node build-main.cjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:integration": "INTEGRATION=true vitest run",
     "test:integration:watch": "INTEGRATION=true vitest",
-    "electron:dev": "concurrently \"vite dev\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron:build": "vite build && electron-builder",
-    "electron:preview": "vite build && electron ."
+    "electron:dev": "npm run build:main && concurrently \"vite dev\" \"wait-on http://localhost:5173 && node electron-launcher.cjs\"",
+    "electron:build": "npm run build:main && vite build && electron-builder",
+    "electron:preview": "npm run build:main && vite build && electron ."
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.0",
@@ -35,6 +36,7 @@
     "@vitest/ui": "^4.0.16",
     "concurrently": "^9.2.1",
     "dotenv": "^17.2.3",
+    "esbuild": "^0.27.2",
     "sharp": "^0.34.5",
     "svelte": "^5.0.0",
     "typescript": "^5.0.0",
@@ -45,7 +47,7 @@
   "optionalDependencies": {
     "@electron/rebuild": "^4.0.2",
     "better-sqlite3": "^12.5.0",
-    "electron": "^39.0.0",
+    "electron": "^33.4.11",
     "electron-builder": "^26.0.0",
     "electron-rebuild": "^3.2.9"
   },

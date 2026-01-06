@@ -1,13 +1,20 @@
 // Canopy - Electron Main Process
 // Copyright © 2025 Marcus Wendt / FIELD.IO (https://field.io)
 // Proprietary and Confidential - All Rights Reserved
+
+// Electron built-in modules (resolved by Electron runtime, not npm)
 import { app, BrowserWindow, ipcMain, nativeImage, Menu } from 'electron';
+
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import Database from 'better-sqlite3';
+import { createRequire } from 'module';
 import { randomUUID } from 'crypto';
+
+// Use createRequire for native CommonJS modules
+const require = createRequire(import.meta.url);
+const Database = require('better-sqlite3');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
