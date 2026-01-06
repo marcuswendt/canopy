@@ -21,6 +21,7 @@
   import { hasApiKey, getFallbackMessage } from '$lib/ai';
   import {
     suggestionsByMessage,
+    pendingSuggestions,
     addSuggestion,
     confirmSuggestion as baseConfirmSuggestion,
     rejectSuggestion,
@@ -56,6 +57,13 @@
   let messagesContainer: HTMLDivElement;
   let memoryPromptDismissed = $state(false);
   let memoryPromptSaving = $state(false);
+
+  // Pending entity suggestions (not yet confirmed)
+  let pendingEntitySuggestions = $derived(
+    $pendingSuggestions
+      .filter(s => s.type === 'entity' && s.entity)
+      .filter(s => !contextEntities.find(e => e.name === s.entity!.name))
+  );
 
   // Auto-scroll to bottom when messages change
   $effect(() => {
@@ -597,7 +605,23 @@
                 <DomainBadge domain={entity.domain} small />
               </div>
             {/each}
-            {#if contextEntities.length === 0}
+            {#each pendingEntitySuggestions as suggestion}
+              <button
+                class="context-item pending"
+                onclick={() => confirmSuggestion(suggestion.id)}
+                title="Click to confirm"
+              >
+                <span class="context-name">
+                  {suggestion.entity?.name}
+                  <span class="pending-badge">pending</span>
+                </span>
+                {#if suggestion.entity?.description}
+                  <span class="context-desc">{suggestion.entity.description}</span>
+                {/if}
+                <DomainBadge domain={suggestion.entity?.domain || 'personal'} small />
+              </button>
+            {/each}
+            {#if contextEntities.length === 0 && pendingEntitySuggestions.length === 0}
               <p class="empty-context">Entities mentioned will appear here.</p>
             {/if}
           </section>
@@ -919,8 +943,43 @@
     padding: var(--space-sm);
     background: var(--bg-primary);
     border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    text-align: left;
+    width: 100%;
   }
-  
+
+  button.context-item {
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  button.context-item:hover {
+    border-color: var(--accent);
+    background: var(--bg-tertiary);
+  }
+
+  .context-item.pending {
+    opacity: 0.7;
+    border-style: dashed;
+    border-color: var(--border);
+  }
+
+  .context-item.pending:hover {
+    opacity: 1;
+  }
+
+  .pending-badge {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    margin-left: var(--space-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
   .context-name {
     font-size: 14px;
     font-weight: 500;
