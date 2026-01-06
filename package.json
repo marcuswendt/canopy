@@ -45,6 +45,7 @@
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",
+    "@sveltejs/adapter-vercel": "^6.3.0",
     "better-sqlite3": "^12.5.0",
     "marked": "^17.0.1",
     "uuid": "^13.0.0"

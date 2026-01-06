@@ -1,10 +1,12 @@
 // Database client for Canopy
-// Wraps Electron IPC with nice TypeScript interface + fallbacks for web dev
+// Wraps Electron IPC with nice TypeScript interface + HTTP API for web
 
 import type { Entity, Relationship, Capture, Thread, Message, Memory } from './types';
 
-// Check if running in Electron
+// Environment detection
 const isElectron = typeof window !== 'undefined' && window.canopy !== undefined;
+const isBrowser = typeof window !== 'undefined';
+const isWeb = isBrowser && !isElectron;
 
 // Helper to parse JSON fields from SQLite
 function parseJsonField<T>(value: string | undefined | null): T | undefined {
@@ -17,7 +19,7 @@ function parseJsonField<T>(value: string | undefined | null): T | undefined {
 }
 
 // Transform raw DB entity to typed entity
-function transformEntity(raw: any): Entity & { 
+function transformEntity(raw: any): Entity & {
   parsedMetadata?: Record<string, any>;
   lastMentionedDate?: Date;
 } {
@@ -28,6 +30,47 @@ function transformEntity(raw: any): Entity & {
   };
 }
 
+// HTTP API helpers for web mode
+async function apiGet<T>(path: string): Promise<T> {
+  const response = await fetch(`/api${path}`);
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+  return response.json();
+}
+
+async function apiPost<T>(path: string, body: any): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+  return response.json();
+}
+
+async function apiPatch<T>(path: string, body: any): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+  return response.json();
+}
+
+async function apiDelete<T>(path: string): Promise<T> {
+  const response = await fetch(`/api${path}`, { method: 'DELETE' });
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+  return response.json();
+}
+
 // ============ Entities ============
 
 export async function getEntities(): Promise<Entity[]> {
@@ -35,8 +78,11 @@ export async function getEntities(): Promise<Entity[]> {
     const entities = await window.canopy.getEntities();
     return entities.map(transformEntity);
   }
-  // Fallback for web dev - return sample data
-  return getSampleEntities();
+  if (isWeb) {
+    const entities = await apiGet<Entity[]>('/entities');
+    return entities.map(transformEntity);
+  }
+  return [];
 }
 
 export async function createEntity(
@@ -50,6 +96,10 @@ export async function createEntity(
     const entity = await window.canopy.createEntity({ type, name, domain, description, icon });
     return transformEntity(entity);
   }
+  if (isWeb) {
+    const entity = await apiPost<Entity>('/entities', { type, name, domain, description, icon });
+    return transformEntity(entity);
+  }
   console.log('createEntity (mock):', { type, name, domain });
   return null;
 }
@@ -57,6 +107,16 @@ export async function createEntity(
 export async function updateEntityMention(entityId: string): Promise<void> {
   if (isElectron) {
     await window.canopy.updateEntityMention(entityId);
+  } else if (isWeb) {
+    await apiPatch('/entities', { entityId });
+  }
+}
+
+export async function deleteEntity(entityId: string): Promise<void> {
+  if (isElectron) {
+    await window.canopy.deleteEntity(entityId);
+  } else if (isWeb) {
+    await apiDelete(`/entities?id=${entityId}`);
   }
 }
 
@@ -65,6 +125,9 @@ export async function updateEntityMention(entityId: string): Promise<void> {
 export async function getRelationships(): Promise<Relationship[]> {
   if (isElectron) {
     return await window.canopy.getRelationships();
+  }
+  if (isWeb) {
+    return await apiGet<Relationship[]>('/relationships');
   }
   return [];
 }
@@ -77,6 +140,8 @@ export async function upsertRelationship(
 ): Promise<void> {
   if (isElectron) {
     await window.canopy.upsertRelationship({ sourceId, targetId, type, weight });
+  } else if (isWeb) {
+    await apiPost('/relationships', { sourceId, targetId, type, weight });
   }
 }
 
@@ -109,8 +174,14 @@ export async function recordCoOccurrence(entityIds: string[]): Promise<void> {
           type: 'mentioned_with',
           weight: newWeight
         });
+      } else if (isWeb) {
+        // For web, the server handles weight incrementing via upsert
+        await apiPost('/relationships', {
+          sourceId,
+          targetId,
+          type: 'mentioned_with',
+        });
       } else {
-        // Mock for web dev
         console.log(`Co-occurrence: ${sourceId} <-> ${targetId}`);
       }
     }
@@ -151,14 +222,11 @@ export async function getRelatedEntities(
  * Get threads that mention a specific entity.
  */
 export async function getThreadsForEntity(entityId: string): Promise<Thread[]> {
-  if (isElectron) {
-    const threads = await window.canopy.getRecentThreads(100);
-    return threads.filter(t => {
-      const entityIds = parseJsonField<string[]>(t.entity_ids) || [];
-      return entityIds.includes(entityId);
-    });
-  }
-  return getSampleThreads().filter(t => t.title?.toLowerCase().includes(entityId));
+  const threads = await getRecentThreads(100);
+  return threads.filter(t => {
+    const entityIds = parseJsonField<string[]>(t.entity_ids) || [];
+    return entityIds.includes(entityId);
+  });
 }
 
 /**
@@ -223,6 +291,9 @@ export async function createCapture(
   if (isElectron) {
     return await window.canopy.createCapture({ content, source, entities, domains });
   }
+  if (isWeb) {
+    return await apiPost<Capture>('/captures', { content, source, entities, domains });
+  }
   console.log('createCapture (mock):', content);
   return null;
 }
@@ -230,6 +301,9 @@ export async function createCapture(
 export async function getRecentCaptures(limit?: number): Promise<Capture[]> {
   if (isElectron) {
     return await window.canopy.getRecentCaptures(limit);
+  }
+  if (isWeb) {
+    return await apiGet<Capture[]>(`/captures?limit=${limit ?? 20}`);
   }
   return [];
 }
@@ -240,7 +314,10 @@ export async function createThread(title?: string): Promise<Thread | null> {
   if (isElectron) {
     return await window.canopy.createThread(title);
   }
-  // Mock for web dev
+  if (isWeb) {
+    return await apiPost<Thread>('/threads', { title });
+  }
+  // Mock for SSR/dev
   return {
     id: crypto.randomUUID(),
     title,
@@ -254,7 +331,10 @@ export async function getRecentThreads(limit?: number): Promise<Thread[]> {
   if (isElectron) {
     return await window.canopy.getRecentThreads(limit);
   }
-  return getSampleThreads();
+  if (isWeb) {
+    return await apiGet<Thread[]>(`/threads?limit=${limit ?? 10}`);
+  }
+  return [];
 }
 
 export async function updateThread(
@@ -268,6 +348,8 @@ export async function updateThread(
 ): Promise<void> {
   if (isElectron) {
     await window.canopy.updateThread({ threadId, ...updates });
+  } else if (isWeb) {
+    await apiPatch('/threads', { threadId, ...updates });
   }
 }
 
@@ -282,7 +364,10 @@ export async function addMessage(
   if (isElectron) {
     return await window.canopy.addMessage({ threadId, role, content, entities });
   }
-  // Mock for web dev
+  if (isWeb) {
+    return await apiPost<Message>(`/threads/${threadId}/messages`, { role, content, entities });
+  }
+  // Mock for SSR/dev
   return {
     id: crypto.randomUUID(),
     thread_id: threadId,
@@ -296,6 +381,9 @@ export async function addMessage(
 export async function getThreadMessages(threadId: string): Promise<Message[]> {
   if (isElectron) {
     return await window.canopy.getThreadMessages(threadId);
+  }
+  if (isWeb) {
+    return await apiGet<Message[]>(`/threads/${threadId}/messages`);
   }
   return [];
 }
@@ -312,6 +400,9 @@ export async function createMemory(
   if (isElectron) {
     return await window.canopy.createMemory({ content, sourceType, sourceId, entities, importance });
   }
+  if (isWeb) {
+    return await apiPost<Memory>('/memories', { content, sourceType, sourceId, entities, importance });
+  }
   console.log('createMemory (mock):', content);
   return null;
 }
@@ -320,7 +411,18 @@ export async function getMemories(limit?: number): Promise<Memory[]> {
   if (isElectron) {
     return await window.canopy.getMemories(limit);
   }
+  if (isWeb) {
+    return await apiGet<Memory[]>(`/memories?limit=${limit ?? 50}`);
+  }
   return [];
+}
+
+export async function deleteMemory(memoryId: string): Promise<void> {
+  if (isElectron) {
+    await window.canopy.deleteMemory(memoryId);
+  } else if (isWeb) {
+    await apiDelete(`/memories?id=${memoryId}`);
+  }
 }
 
 // ============ Search ============
@@ -329,11 +431,10 @@ export async function search(query: string): Promise<{ entities: Entity[]; memor
   if (isElectron) {
     return await window.canopy.search(query);
   }
-  // Mock search in sample data
-  const entities = getSampleEntities().filter(e => 
-    e.name.toLowerCase().includes(query.toLowerCase())
-  );
-  return { entities, memories: [] };
+  if (isWeb) {
+    return await apiGet<{ entities: Entity[]; memories: Memory[] }>(`/search?q=${encodeURIComponent(query)}`);
+  }
+  return { entities: [], memories: [] };
 }
 
 // ============ Helpers ============
@@ -341,20 +442,20 @@ export async function search(query: string): Promise<{ entities: Entity[]; memor
 export function extractEntitiesFromText(text: string, entities: Entity[]): Entity[] {
   const found: Entity[] = [];
   const lowerText = text.toLowerCase();
-  
+
   for (const entity of entities) {
     if (lowerText.includes(entity.name.toLowerCase())) {
       found.push(entity);
     }
   }
-  
+
   return found;
 }
 
 export function detectDomains(text: string): string[] {
   const domains: string[] = [];
   const lowerText = text.toLowerCase();
-  
+
   const domainKeywords: Record<string, string[]> = {
     work: ['work', 'client', 'project', 'meeting', 'deadline', 'presentation', 'samsung', 'chanel', 'nike', 'field', 'pitch'],
     family: ['family', 'kids', 'wife', 'celine', 'rafael', 'luca', 'elio', 'trip', 'vacation', 'abel tasman'],
@@ -362,34 +463,22 @@ export function detectDomains(text: string): string[] {
     personal: ['idea', 'canopy', 'side project', 'learning', 'reading'],
     health: ['sleep', 'recovery', 'stress', 'health', 'doctor', 'wellness', 'whoop'],
   };
-  
+
   for (const [domain, keywords] of Object.entries(domainKeywords)) {
     if (keywords.some(kw => lowerText.includes(kw))) {
       domains.push(domain);
     }
   }
-  
+
   return domains;
 }
 
 export function getRecencyScore(lastMentioned: string | undefined, maxDays: number = 30): number {
   if (!lastMentioned) return 0.3;
-  
+
   const now = Date.now();
   const lastActive = new Date(lastMentioned).getTime();
   const daysSince = (now - lastActive) / (1000 * 60 * 60 * 24);
-  
+
   return Math.max(0.3, 1 - (daysSince / maxDays));
-}
-
-// ============ Sample Data (for web dev without Electron) ============
-
-function getSampleEntities(): Entity[] {
-  // Empty - real entities come from database after onboarding
-  return [];
-}
-
-function getSampleThreads(): Thread[] {
-  // Empty - real threads come from database
-  return [];
 }
