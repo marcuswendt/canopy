@@ -741,41 +741,7 @@
     0%, 50% { opacity: 1; }
     51%, 100% { opacity: 0; }
   }
-  
-  .memory-prompt {
-    margin: var(--space-md) var(--space-lg);
-    padding: var(--space-md);
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-md);
-    border-left: 3px solid var(--accent);
-  }
-  
-  .memory-prompt p {
-    font-size: 14px;
-    color: var(--text-secondary);
-    margin-bottom: var(--space-sm);
-  }
-  
-  .memory-actions {
-    display: flex;
-    gap: var(--space-sm);
-  }
-  
-  .memory-btn {
-    padding: var(--space-xs) var(--space-md);
-    border: none;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 13px;
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-  }
-  
-  .memory-btn.primary {
-    background: var(--accent);
-    color: white;
-  }
-  
+
   .input-area {
     padding: var(--space-md) var(--space-lg);
     border-top: 1px solid var(--border);
