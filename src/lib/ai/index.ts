@@ -13,6 +13,10 @@ import { claudeWebProvider } from './providers/claude-web';
 const isBrowser = typeof window !== 'undefined';
 const isElectron = isBrowser && (window as any).canopy?.claude !== undefined;
 
+if (isBrowser) {
+  console.log('[ai] module init - isBrowser:', isBrowser, 'isElectron:', isElectron);
+}
+
 // Register default providers (but don't override if test provider is already set)
 // This allows integration tests to register their provider before importing extraction functions
 registerProvider(claudeProvider);
@@ -21,8 +25,10 @@ registerProvider(claudeWebProvider);
 if (!getProvider('test')) {
   // Use web provider on Vercel/web, Electron provider on desktop
   if (isBrowser && !isElectron) {
+    console.log('[ai] setting active provider to claude-web');
     setActiveProvider('claude-web');
   } else {
+    if (isBrowser) console.log('[ai] setting active provider to claude');
     setActiveProvider('claude');
   }
 }
@@ -64,8 +70,11 @@ export async function extract<T>(
 
 export async function hasApiKey(): Promise<boolean> {
   const provider = getProvider();
+  console.log('[ai] hasApiKey - provider:', provider?.id);
   if (!provider) return false;
-  return provider.isConfigured();
+  const result = await provider.isConfigured();
+  console.log('[ai] hasApiKey - result:', result);
+  return result;
 }
 
 export { isAIError as isError };
