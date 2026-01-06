@@ -488,28 +488,29 @@
             onchange={(_, mentions) => { explicitMentions = mentions; }}
           />
           <div class="input-actions">
-            <input
-              type="file"
-              id="chat-file-input"
-              multiple
-              class="hidden-file-input"
-              onchange={(e) => {
-                const input = e.target as HTMLInputElement;
-                const files = Array.from(input.files || []);
-                for (const file of files) {
-                  uploads.add({
-                    filename: file.name,
-                    mimeType: file.type,
-                    size: file.size,
-                    localPath: '',
-                    source: 'drop',
-                    file: file,
-                  });
-                }
-                input.value = '';
+            <button
+              class="input-action"
+              title="Attach files"
+              onclick={() => {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.multiple = true;
+                input.onchange = (e) => {
+                  const files = Array.from((e.target as HTMLInputElement).files || []);
+                  for (const file of files) {
+                    uploads.add({
+                      filename: file.name,
+                      mimeType: file.type,
+                      size: file.size,
+                      localPath: '',
+                      source: 'drop',
+                      file: file,
+                    });
+                  }
+                };
+                input.click();
               }}
-            />
-            <label for="chat-file-input" class="input-action" title="Attach files">📎</label>
+            >📎</button>
             <button class="input-action" title="Voice">🎤</button>
             <button class="send-btn" onclick={sendMessage} disabled={!inputValue.trim() || isLoading}>
               Send
@@ -788,19 +789,6 @@
 
   .input-action:hover {
     background: var(--bg-tertiary);
-  }
-
-  .hidden-file-input {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    overflow: hidden;
-    pointer-events: none;
-  }
-
-  label.input-action {
-    cursor: pointer;
   }
 
   .send-btn {
