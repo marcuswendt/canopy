@@ -238,7 +238,22 @@ function initDatabase() {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Pending suggestions (Bonsai system)
+    CREATE TABLE IF NOT EXISTS suggestions (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      data JSON NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME,
+      FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_entities_domain ON entities(domain);
+    CREATE INDEX IF NOT EXISTS idx_suggestions_thread ON suggestions(thread_id);
+    CREATE INDEX IF NOT EXISTS idx_suggestions_status ON suggestions(status);
     CREATE INDEX IF NOT EXISTS idx_artifacts_updated ON artifacts(updated_at);
     CREATE INDEX IF NOT EXISTS idx_entities_last_mentioned ON entities(last_mentioned);
     CREATE INDEX IF NOT EXISTS idx_captures_created ON captures(created_at);
@@ -586,22 +601,63 @@ ipcMain.handle('db:deleteMemory', (event, { memoryId }) => {
 // Search across entities and memories
 ipcMain.handle('db:search', (event, { query }) => {
   const searchTerm = `%${query}%`;
-  
+
   const entities = db.prepare(`
-    SELECT 'entity' as type, id, name, domain, description 
-    FROM entities 
+    SELECT 'entity' as type, id, name, domain, description
+    FROM entities
     WHERE name LIKE ? OR description LIKE ?
     LIMIT 10
   `).all(searchTerm, searchTerm);
-  
+
   const memories = db.prepare(`
     SELECT 'memory' as type, id, content, importance
     FROM memories
     WHERE content LIKE ?
     LIMIT 10
   `).all(searchTerm);
-  
+
   return { entities, memories };
+});
+
+// ============ Suggestions (Bonsai system) ============
+
+ipcMain.handle('db:addSuggestion', (event, { id, threadId, messageId, type, status, data, expiresAt }) => {
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO suggestions (id, thread_id, message_id, type, status, data, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run(id, threadId, messageId, type, status || 'pending', JSON.stringify(data), expiresAt);
+  return { success: true };
+});
+
+ipcMain.handle('db:getSuggestionsForThread', (event, { threadId }) => {
+  const rows = db.prepare(`
+    SELECT * FROM suggestions
+    WHERE thread_id = ? AND status = 'pending'
+    ORDER BY created_at DESC
+  `).all(threadId);
+  return rows;
+});
+
+ipcMain.handle('db:updateSuggestionStatus', (event, { id, status }) => {
+  const stmt = db.prepare('UPDATE suggestions SET status = ? WHERE id = ?');
+  stmt.run(status, id);
+  return { success: true };
+});
+
+ipcMain.handle('db:deleteSuggestion', (event, { id }) => {
+  const stmt = db.prepare('DELETE FROM suggestions WHERE id = ?');
+  stmt.run(id);
+  return { success: true };
+});
+
+ipcMain.handle('db:cleanupExpiredSuggestions', () => {
+  const stmt = db.prepare(`
+    DELETE FROM suggestions
+    WHERE status = 'pending' AND expires_at < datetime('now')
+  `);
+  const result = stmt.run();
+  return { success: true, deleted: result.changes };
 });
 
 // ============ Signals (from integrations) ============

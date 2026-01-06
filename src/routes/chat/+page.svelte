@@ -28,7 +28,8 @@
     confirmAllForMessage as baseConfirmAllForMessage,
     rejectAllForMessage,
     startCleanupInterval,
-    stopCleanupInterval
+    stopCleanupInterval,
+    loadSuggestionsForThread
   } from '$lib/client/stores/suggestions';
   import SuggestionBar from '$lib/client/components/SuggestionBar.svelte';
   import { buildChatContext, estimateMessageTokens } from '$lib/ai/context';
@@ -154,6 +155,9 @@
         contextEntities = restoredEntities;
         threadDomains = threadDomains; // trigger reactivity
       }
+
+      // Load pending suggestions from database
+      await loadSuggestionsForThread(existingThreadId);
     }
 
     if (entityId) {

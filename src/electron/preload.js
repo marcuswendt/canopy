@@ -33,7 +33,14 @@ contextBridge.exposeInMainWorld('canopy', {
   
   // Search
   search: (query) => ipcRenderer.invoke('db:search', { query }),
-  
+
+  // ============ Suggestions (Bonsai system) ============
+  addSuggestion: (data) => ipcRenderer.invoke('db:addSuggestion', data),
+  getSuggestionsForThread: (threadId) => ipcRenderer.invoke('db:getSuggestionsForThread', { threadId }),
+  updateSuggestionStatus: (id, status) => ipcRenderer.invoke('db:updateSuggestionStatus', { id, status }),
+  deleteSuggestion: (id) => ipcRenderer.invoke('db:deleteSuggestion', { id }),
+  cleanupExpiredSuggestions: () => ipcRenderer.invoke('db:cleanupExpiredSuggestions'),
+
   // ============ Signals (from integrations) ============
   addSignal: (data) => ipcRenderer.invoke('db:addSignal', data),
   addSignals: (signals) => ipcRenderer.invoke('db:addSignals', { signals }),

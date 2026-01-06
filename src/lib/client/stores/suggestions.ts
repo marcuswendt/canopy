@@ -2,15 +2,15 @@
 // "AI can suggest, but nothing becomes permanent until you confirm it"
 
 import { writable, derived, get } from 'svelte/store';
-import type { Entity, Memory } from '$lib/client/db/types';
+import type { Entity, Memory, SuggestionRow } from '$lib/client/db/types';
 import { createEntity, updateEntityMention, createMemory } from '$lib/client/db/client';
 
 // =============================================================================
 // CONFIGURATION
 // =============================================================================
 
-const SUGGESTION_TTL_MS = 5 * 60 * 1000;  // 5 minutes until auto-expire
-const CLEANUP_INTERVAL_MS = 30 * 1000;    // Check for expired every 30s
+const SUGGESTION_TTL_MS = 24 * 60 * 60 * 1000;  // 24 hours until auto-expire (extended for persistence)
+const CLEANUP_INTERVAL_MS = 60 * 1000;           // Check for expired every minute
 
 // =============================================================================
 // TYPES
@@ -57,6 +57,72 @@ export interface PendingSuggestion {
 }
 
 // =============================================================================
+// DATABASE HELPERS
+// =============================================================================
+
+function isElectron(): boolean {
+  return typeof window !== 'undefined' && typeof window.canopy !== 'undefined';
+}
+
+/**
+ * Persist a suggestion to the database
+ */
+async function persistSuggestion(suggestion: PendingSuggestion): Promise<void> {
+  if (!isElectron()) return;
+
+  try {
+    const data: Record<string, unknown> = {};
+    if (suggestion.entity) data.entity = suggestion.entity;
+    if (suggestion.memory) data.memory = suggestion.memory;
+    if (suggestion.pattern) data.pattern = suggestion.pattern;
+
+    await window.canopy.addSuggestion({
+      id: suggestion.id,
+      threadId: suggestion.threadId,
+      messageId: suggestion.messageId,
+      type: suggestion.type,
+      status: suggestion.status,
+      data,
+      expiresAt: suggestion.expiresAt,
+    });
+  } catch (err) {
+    console.error('Failed to persist suggestion:', err);
+  }
+}
+
+/**
+ * Update suggestion status in database
+ */
+async function updateSuggestionStatusInDb(id: string, status: string): Promise<void> {
+  if (!isElectron()) return;
+
+  try {
+    await window.canopy.updateSuggestionStatus(id, status);
+  } catch (err) {
+    console.error('Failed to update suggestion status:', err);
+  }
+}
+
+/**
+ * Convert database row to PendingSuggestion
+ */
+function rowToSuggestion(row: SuggestionRow): PendingSuggestion {
+  const data = JSON.parse(row.data);
+  return {
+    id: row.id,
+    type: row.type as SuggestionType,
+    messageId: row.message_id,
+    threadId: row.thread_id,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at || new Date(Date.now() + SUGGESTION_TTL_MS).toISOString(),
+    status: row.status as SuggestionStatus,
+    entity: data.entity,
+    memory: data.memory,
+    pattern: data.pattern,
+  };
+}
+
+// =============================================================================
 // STORES
 // =============================================================================
 
@@ -89,7 +155,7 @@ export const pendingCount = derived(pendingSuggestions, ($pending) => $pending.l
 // =============================================================================
 
 /**
- * Add a new suggestion to the pending list
+ * Add a new suggestion to the pending list and persist to DB
  */
 export function addSuggestion(
   suggestion: Omit<PendingSuggestion, 'id' | 'createdAt' | 'expiresAt' | 'status'>
@@ -106,6 +172,10 @@ export function addSuggestion(
   };
 
   suggestions.update(list => [...list, newSuggestion]);
+
+  // Persist to database (non-blocking)
+  persistSuggestion(newSuggestion);
+
   return id;
 }
 
@@ -116,6 +186,27 @@ export function addSuggestions(
   items: Array<Omit<PendingSuggestion, 'id' | 'createdAt' | 'expiresAt' | 'status'>>
 ): string[] {
   return items.map(addSuggestion);
+}
+
+/**
+ * Load suggestions for a thread from the database
+ */
+export async function loadSuggestionsForThread(threadId: string): Promise<void> {
+  if (!isElectron()) return;
+
+  try {
+    const rows = await window.canopy.getSuggestionsForThread(threadId);
+    const loaded = rows.map(rowToSuggestion);
+
+    // Merge with existing suggestions (avoid duplicates)
+    suggestions.update(list => {
+      const existingIds = new Set(list.map(s => s.id));
+      const newOnes = loaded.filter(s => !existingIds.has(s.id));
+      return [...list, ...newOnes];
+    });
+  } catch (err) {
+    console.error('Failed to load suggestions for thread:', err);
+  }
 }
 
 /**
@@ -142,6 +233,9 @@ export async function confirmSuggestion(id: string): Promise<ConfirmResult> {
   suggestions.update(list =>
     list.map(s => s.id === id ? { ...s, status: 'confirmed' as const } : s)
   );
+
+  // Update in database
+  updateSuggestionStatusInDb(id, 'confirmed');
 
   try {
     // Persist based on type
@@ -175,6 +269,7 @@ export async function confirmSuggestion(id: string): Promise<ConfirmResult> {
     suggestions.update(list =>
       list.map(s => s.id === id ? { ...s, status: 'pending' as const } : s)
     );
+    updateSuggestionStatusInDb(id, 'pending');
     return { success: false };
   }
 }
@@ -186,6 +281,9 @@ export function rejectSuggestion(id: string): void {
   suggestions.update(list =>
     list.map(s => s.id === id ? { ...s, status: 'rejected' as const } : s)
   );
+
+  // Update in database
+  updateSuggestionStatusInDb(id, 'rejected');
 }
 
 /**
@@ -207,6 +305,11 @@ export async function confirmAllForMessage(messageId: string): Promise<void> {
  * Reject all pending suggestions for a specific message
  */
 export function rejectAllForMessage(messageId: string): void {
+  const currentList = get(suggestions);
+  const toReject = currentList.filter(
+    s => s.messageId === messageId && s.status === 'pending'
+  );
+
   suggestions.update(list =>
     list.map(s =>
       s.messageId === messageId && s.status === 'pending'
@@ -214,6 +317,11 @@ export function rejectAllForMessage(messageId: string): void {
         : s
     )
   );
+
+  // Update each in database
+  for (const s of toReject) {
+    updateSuggestionStatusInDb(s.id, 'rejected');
+  }
 }
 
 /**
@@ -233,6 +341,13 @@ export function cleanupSuggestions(): void {
       return new Date(s.createdAt) > oneHourAgo;
     })
   );
+
+  // Also clean up expired in database
+  if (isElectron()) {
+    window.canopy.cleanupExpiredSuggestions().catch(err => {
+      console.error('Failed to cleanup expired suggestions in DB:', err);
+    });
+  }
 }
 
 /**
@@ -243,9 +358,9 @@ export function clearAllSuggestions(): void {
 }
 
 /**
- * Get suggestions for a specific thread
+ * Get suggestions for a specific thread (from memory)
  */
-export function getSuggestionsForThread(threadId: string): PendingSuggestion[] {
+export function getSuggestionsForThreadMemory(threadId: string): PendingSuggestion[] {
   return get(pendingSuggestions).filter(s => s.threadId === threadId);
 }
 

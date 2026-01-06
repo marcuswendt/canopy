@@ -107,6 +107,18 @@ export interface SignalRow {
   created_at: string;
 }
 
+// Suggestion row from database (Bonsai system)
+export interface SuggestionRow {
+  id: string;
+  thread_id: string;
+  message_id: string;
+  type: string;
+  status: string;
+  data: string; // JSON
+  created_at: string;
+  expires_at: string | null;
+}
+
 // Electron API interface (exposed via preload)
 export interface CanopyAPI {
   // Entities
@@ -173,6 +185,21 @@ export interface CanopyAPI {
     entities: Entity[];
     memories: Memory[];
   }>;
+
+  // Suggestions (Bonsai system)
+  addSuggestion: (data: {
+    id: string;
+    threadId: string;
+    messageId: string;
+    type: string;
+    status?: string;
+    data: Record<string, unknown>;
+    expiresAt?: string;
+  }) => Promise<{ success: boolean }>;
+  getSuggestionsForThread: (threadId: string) => Promise<SuggestionRow[]>;
+  updateSuggestionStatus: (id: string, status: string) => Promise<{ success: boolean }>;
+  deleteSuggestion: (id: string) => Promise<{ success: boolean }>;
+  cleanupExpiredSuggestions: () => Promise<{ success: boolean; deleted: number }>;
 
   // User Profile
   getUserProfile: () => Promise<{
