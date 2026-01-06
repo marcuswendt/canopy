@@ -23,6 +23,26 @@ export async function getDb(): Promise<DatabaseAdapter> {
 }
 
 /**
+ * Get the current user ID from session (for Vercel multi-user mode)
+ * Returns undefined in local/Electron mode (single user)
+ */
+export async function getUserId(event: RequestEvent): Promise<string | undefined> {
+  const session = await event.locals.auth?.();
+  return session?.user?.id;
+}
+
+/**
+ * Require authentication - throws 401 if not authenticated
+ */
+export async function requireAuth(event: RequestEvent): Promise<string> {
+  const userId = await getUserId(event);
+  if (!userId) {
+    throw error(401, 'Authentication required');
+  }
+  return userId;
+}
+
+/**
  * Standard JSON response helper
  */
 export function success<T>(data: T) {

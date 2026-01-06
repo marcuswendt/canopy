@@ -44,6 +44,8 @@
     "wait-on": "^9.0.3"
   },
   "dependencies": {
+    "@auth/core": "^0.41.1",
+    "@auth/sveltekit": "^1.11.1",
     "@libsql/client": "^0.15.15",
     "@sveltejs/adapter-vercel": "^6.3.0",
     "better-sqlite3": "^12.5.0",
