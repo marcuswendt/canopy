@@ -4,12 +4,12 @@
   import { rayState, needsOnboarding, rayStateLoaded } from '$lib/coach/store';
   import { get } from 'svelte/store';
   import { RAY_VOICE, type OnboardingPhase, getPersonalGreeting } from '$lib/coach/ray';
-  import { createEntity, updateEntityMention, getEntities } from '$lib/db/client';
-  import { loadEntities } from '$lib/stores/entities';
-  import type { Entity } from '$lib/db/types';
+  import { createEntity, updateEntityMention, getEntities } from '$lib/client/db/client';
+  import { loadEntities } from '$lib/client/stores/entities';
+  import type { Entity } from '$lib/client/db/types';
   import { persona, platforms, syncAllPlatforms } from '$lib/persona/store';
   import { hasApiKey } from '$lib/ai';
-  import { userSettings, guessLocation } from '$lib/stores/settings';
+  import { userSettings, guessLocation } from '$lib/client/stores/settings';
   import {
     generateOnboardingResponse,
     extractFromUrl,
@@ -21,19 +21,19 @@
 
   // URL regex for detecting links in user input
   const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/gi;
-  import PlatformInput from '$lib/components/PlatformInput.svelte';
-  import FileDropZone from '$lib/components/FileDropZone.svelte';
-  import UploadedFiles from '$lib/components/UploadedFiles.svelte';
-  import VoiceInput from '$lib/components/VoiceInput.svelte';
-  import Markdown from '$lib/components/Markdown.svelte';
-  import { uploads, completedUploads, type FileUpload } from '$lib/uploads';
-  import { getAvailableIntegrations } from '$lib/integrations/init';
-  import { connectPlugin, pluginStates } from '$lib/integrations/registry';
-  import StructuredInput, { type FieldConfig } from '$lib/components/StructuredInput.svelte';
-  import MentionInput from '$lib/components/MentionInput.svelte';
-  import EntityCarousel from '$lib/components/onboarding/EntityCarousel.svelte';
-  import ConfirmationNotification from '$lib/components/onboarding/ConfirmationNotification.svelte';
-  import CompletionSummary from '$lib/components/onboarding/CompletionSummary.svelte';
+  import PlatformInput from '$lib/client/components/PlatformInput.svelte';
+  import FileDropZone from '$lib/client/components/FileDropZone.svelte';
+  import UploadedFiles from '$lib/client/components/UploadedFiles.svelte';
+  import VoiceInput from '$lib/client/components/VoiceInput.svelte';
+  import Markdown from '$lib/client/components/Markdown.svelte';
+  import { uploads, completedUploads, type FileUpload } from '$lib/client/uploads';
+  import { getAvailableIntegrations } from '$lib/client/integrations/init';
+  import { connectPlugin, pluginStates } from '$lib/client/integrations/registry';
+  import StructuredInput, { type FieldConfig } from '$lib/client/components/StructuredInput.svelte';
+  import MentionInput from '$lib/client/components/MentionInput.svelte';
+  import EntityCarousel from '$lib/client/components/onboarding/EntityCarousel.svelte';
+  import ConfirmationNotification from '$lib/client/components/onboarding/ConfirmationNotification.svelte';
+  import CompletionSummary from '$lib/client/components/onboarding/CompletionSummary.svelte';
 
   let messages = $state<{ role: 'ray' | 'user'; content: string }[]>([]);
   let messagesEl = $state<HTMLDivElement | null>(null);

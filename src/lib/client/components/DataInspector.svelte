@@ -1,17 +1,17 @@
 <!-- Data Inspector - Devtools for Canopy internals -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { entities } from '$lib/stores/entities';
-  import { pluginStates, allPlugins, integrationSignals } from '$lib/integrations/registry';
-  import { registry } from '$lib/integrations/registry';
+  import { entities } from '$lib/client/stores/entities';
+  import { pluginStates, allPlugins, integrationSignals } from '$lib/client/integrations/registry';
+  import { registry } from '$lib/client/integrations/registry';
   import { referenceStates, referencePlugins } from '$lib/reference/registry';
   import {
     getEntities,
     getRecentThreads,
     getMemories,
     getThreadMessages
-  } from '$lib/db/client';
-  import type { Entity, Thread, Memory, Message } from '$lib/db/types';
+  } from '$lib/client/db/client';
+  import type { Entity, Thread, Memory, Message } from '$lib/client/db/types';
 
   interface Props {
     open: boolean;

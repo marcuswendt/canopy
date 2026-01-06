@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { uploads, pendingUploads, completedUploads, isImage, type FileUpload } from '$lib/uploads';
+  import { uploads, pendingUploads, completedUploads, isImage, type FileUpload } from '$lib/client/uploads';
 
   interface Props {
     showSuggestions?: boolean;

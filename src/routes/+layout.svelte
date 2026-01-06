@@ -3,13 +3,13 @@
   import { onMount, type Snippet } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import Sidebar from '$lib/components/Sidebar.svelte';
-  import DataInspector from '$lib/components/DataInspector.svelte';
-  import { sidebarOpen, initTheme } from '$lib/stores/ui';
-  import { loadEntities, loadRelationships } from '$lib/stores/entities';
+  import Sidebar from '$lib/client/components/Sidebar.svelte';
+  import DataInspector from '$lib/client/components/DataInspector.svelte';
+  import { sidebarOpen, initTheme } from '$lib/client/stores/ui';
+  import { loadEntities, loadRelationships } from '$lib/client/stores/entities';
   import { rayState, needsOnboarding, rayStateLoaded } from '$lib/coach/store';
-  import { initializePlugins, startPluginScheduler } from '$lib/integrations/init';
-  import { inspectorOpen } from '$lib/stores/inspector';
+  import { initializePlugins, startPluginScheduler } from '$lib/client/integrations/init';
+  import { inspectorOpen } from '$lib/client/stores/inspector';
 
   let { children }: { children: Snippet } = $props();
 

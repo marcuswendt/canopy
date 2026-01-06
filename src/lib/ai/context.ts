@@ -2,7 +2,7 @@
 // Handles token estimation, summarization, and smart compaction
 
 import { complete, isError, type AIMessage } from './index';
-import type { Entity, Message } from '$lib/db/types';
+import type { Entity, Message } from '$lib/client/db/types';
 
 // =============================================================================
 // CONFIGURATION

@@ -1,9 +1,9 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { theme, formatTimeAgo } from '$lib/stores/ui';
-  import { entitiesByRecency } from '$lib/stores/entities';
-  import { getRecencyScore } from '$lib/db/client';
-  import DomainBadge from '$lib/components/DomainBadge.svelte';
+  import { theme, formatTimeAgo } from '$lib/client/stores/ui';
+  import { entitiesByRecency } from '$lib/client/stores/entities';
+  import { getRecencyScore } from '$lib/client/db/client';
+  import DomainBadge from '$lib/client/components/DomainBadge.svelte';
 
   let inputValue = $state('');
   let inputFocused = $state(false);

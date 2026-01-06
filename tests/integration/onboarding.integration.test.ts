@@ -15,8 +15,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { extractFromOnboardingDocument, generateOnboardingResponse } from './extraction';
-import { shouldRunIntegrationTests, isAIAvailable, setupIntegrationTests } from '../test/setup';
+import { extractFromOnboardingDocument, generateOnboardingResponse } from '$lib/ai/extraction';
+import { shouldRunIntegrationTests, isAIAvailable, setupIntegrationTests } from '../setup';
 
 // Load Marcus's onboarding document
 const documentPath = join(process.cwd(), 'data/onboarding/Marcus onboarding.md');

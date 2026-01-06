@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { registry, allPlugins, pluginStates, syncPlugin, connectPlugin, disconnectPlugin, enablePlugin, disablePlugin } from '$lib/integrations/registry';
-  import { whoopPlugin } from '$lib/integrations/whoop';
-  import { googlePlugin } from '$lib/integrations/google';
+  import { registry, allPlugins, pluginStates, syncPlugin, connectPlugin, disconnectPlugin, enablePlugin, disablePlugin } from '$lib/client/integrations/registry';
+  import { whoopPlugin } from '$lib/client/integrations/whoop';
+  import { googlePlugin } from '$lib/client/integrations/google';
   import { hasApiKey } from '$lib/ai';
-  import { userSettings } from '$lib/stores/settings';
+  import { userSettings } from '$lib/client/stores/settings';
   import { rayState } from '$lib/coach/store';
 
   // Claude API key state

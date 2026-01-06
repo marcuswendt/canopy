@@ -2,8 +2,8 @@
 // "AI can suggest, but nothing becomes permanent until you confirm it"
 
 import { writable, derived, get } from 'svelte/store';
-import type { Entity, Memory } from '$lib/db/types';
-import { createEntity, updateEntityMention, createMemory } from '$lib/db/client';
+import type { Entity, Memory } from '$lib/client/db/types';
+import { createEntity, updateEntityMention, createMemory } from '$lib/client/db/client';
 
 // =============================================================================
 // CONFIGURATION

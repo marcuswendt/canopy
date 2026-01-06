@@ -6,8 +6,8 @@ import {
   getRelatedEntities as fetchRelatedEntities,
   getEntityGraph as fetchEntityGraph,
   getThreadsForEntity
-} from '$lib/db/client';
-import type { Entity, Relationship, Thread } from '$lib/db/types';
+} from '$lib/client/db/client';
+import type { Entity, Relationship, Thread } from '$lib/client/db/types';
 
 // Main stores
 export const entities = writable<Entity[]>([]);

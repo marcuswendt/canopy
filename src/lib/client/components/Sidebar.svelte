@@ -1,8 +1,8 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { sidebarOpen, sidebarTab, pinnedItems, formatTimeAgo } from '$lib/stores/ui';
-  import { entities, entitiesByDomain } from '$lib/stores/entities';
-  import { getRecentThreads } from '$lib/db/client';
+  import { sidebarOpen, sidebarTab, pinnedItems, formatTimeAgo } from '$lib/client/stores/ui';
+  import { entities, entitiesByDomain } from '$lib/client/stores/entities';
+  import { getRecentThreads } from '$lib/client/db/client';
   import DomainBadge from './DomainBadge.svelte';
   import { onMount } from 'svelte';
 

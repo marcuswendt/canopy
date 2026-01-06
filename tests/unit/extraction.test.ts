@@ -11,8 +11,8 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import testMarcus from '../../../data/onboarding/test-marcus.json';
-import testCeline from '../../../data/onboarding/test-celine.json';
+import testMarcus from '../../data/onboarding/test-marcus.json';
+import testCeline from '../../data/onboarding/test-celine.json';
 
 // =============================================================================
 // TYPE DEFINITIONS
@@ -363,7 +363,7 @@ describe.skipIf(!process.env.INTEGRATION)('Integration: Document Extraction', ()
 
   it('extracts entities from Celine document', async () => {
     // Import the actual extraction function
-    const { extractFromOnboardingDocument } = await import('./extraction');
+    const { extractFromOnboardingDocument } = await import('$lib/ai/extraction');
 
     const result = await extractFromOnboardingDocument(
       testCeline.document,
@@ -418,7 +418,7 @@ describe.skipIf(!process.env.INTEGRATION)('Integration: Document Extraction', ()
   }, 60000); // 60s timeout for API call
 
   it('extracts entities from Marcus multi-turn input', async () => {
-    const { extractFromOnboardingDocument } = await import('./extraction');
+    const { extractFromOnboardingDocument } = await import('$lib/ai/extraction');
 
     // Combine all Marcus inputs into one document
     const combinedContent = testMarcus.inputs.map(i => i.text).join('\n\n');
@@ -459,7 +459,7 @@ describe.skipIf(!process.env.INTEGRATION)('Integration: Document Extraction', ()
 
 describe.skipIf(!process.env.INTEGRATION)('Integration: Conversation Flow', () => {
   it('generates appropriate response after document extraction', async () => {
-    const extraction = await import('./extraction');
+    const extraction = await import('$lib/ai/extraction');
     const { extractFromOnboardingDocument, generateOnboardingResponse } = extraction;
 
     // Stage 1
@@ -917,7 +917,7 @@ describe('Bonsai Chat Suggestions: Extraction Behavior', () => {
 
 describe.skipIf(!process.env.INTEGRATION)('Integration: Chat Suggestion Extraction', () => {
   it('extracts entities from a new person mention', async () => {
-    const { extractChatSuggestions } = await import('./extraction');
+    const { extractChatSuggestions } = await import('$lib/ai/extraction');
 
     const scenario = chatScenarios.newPerson;
     const result = await extractChatSuggestions(
@@ -938,7 +938,7 @@ describe.skipIf(!process.env.INTEGRATION)('Integration: Chat Suggestion Extracti
   }, 30000);
 
   it('extracts memories from a decision', async () => {
-    const { extractChatSuggestions } = await import('./extraction');
+    const { extractChatSuggestions } = await import('$lib/ai/extraction');
 
     const scenario = chatScenarios.decision;
     const result = await extractChatSuggestions(
@@ -959,7 +959,7 @@ describe.skipIf(!process.env.INTEGRATION)('Integration: Chat Suggestion Extracti
   }, 30000);
 
   it('extracts multiple entities from rich message', async () => {
-    const { extractChatSuggestions } = await import('./extraction');
+    const { extractChatSuggestions } = await import('$lib/ai/extraction');
 
     const scenario = chatScenarios.multipleEntities;
     const result = await extractChatSuggestions(
@@ -980,7 +980,7 @@ describe.skipIf(!process.env.INTEGRATION)('Integration: Chat Suggestion Extracti
   }, 30000);
 
   it('returns empty for casual chat', async () => {
-    const { extractChatSuggestions } = await import('./extraction');
+    const { extractChatSuggestions } = await import('$lib/ai/extraction');
 
     const scenario = chatScenarios.casualChat;
     const result = await extractChatSuggestions(
@@ -996,7 +996,7 @@ describe.skipIf(!process.env.INTEGRATION)('Integration: Chat Suggestion Extracti
   }, 30000);
 
   it('skips very short messages', async () => {
-    const { extractChatSuggestions } = await import('./extraction');
+    const { extractChatSuggestions } = await import('$lib/ai/extraction');
 
     const scenario = chatScenarios.tooShort;
     const result = await extractChatSuggestions(
@@ -1012,7 +1012,7 @@ describe.skipIf(!process.env.INTEGRATION)('Integration: Chat Suggestion Extracti
   }, 30000);
 
   it('does not re-extract existing entities', async () => {
-    const { extractChatSuggestions } = await import('./extraction');
+    const { extractChatSuggestions } = await import('$lib/ai/extraction');
 
     // Message mentioning an existing entity
     const result = await extractChatSuggestions(
@@ -1029,7 +1029,7 @@ describe.skipIf(!process.env.INTEGRATION)('Integration: Chat Suggestion Extracti
   }, 30000);
 
   it('does not duplicate existing memories', async () => {
-    const { extractChatSuggestions } = await import('./extraction');
+    const { extractChatSuggestions } = await import('$lib/ai/extraction');
 
     // Message that might generate duplicate memory
     const result = await extractChatSuggestions(
@@ -1050,7 +1050,7 @@ describe.skipIf(!process.env.INTEGRATION)('Integration: Chat Suggestion Extracti
   }, 30000);
 
   it('extracts preference from user statement', async () => {
-    const { extractChatSuggestions } = await import('./extraction');
+    const { extractChatSuggestions } = await import('$lib/ai/extraction');
 
     const scenario = chatScenarios.preference;
     const result = await extractChatSuggestions(
@@ -1071,7 +1071,7 @@ describe.skipIf(!process.env.INTEGRATION)('Integration: Chat Suggestion Extracti
   }, 30000);
 
   it('extracts insights from self-reflection', async () => {
-    const { extractChatSuggestions } = await import('./extraction');
+    const { extractChatSuggestions } = await import('$lib/ai/extraction');
 
     const scenario = chatScenarios.insightShared;
     const result = await extractChatSuggestions(
@@ -1092,7 +1092,7 @@ describe.skipIf(!process.env.INTEGRATION)('Integration: Chat Suggestion Extracti
   }, 30000);
 
   it('handles complex real-world exchange', async () => {
-    const { extractChatSuggestions } = await import('./extraction');
+    const { extractChatSuggestions } = await import('$lib/ai/extraction');
 
     const result = await extractChatSuggestions(
       `Just got off a call with Tom from Spotify. He wants to move up the timeline

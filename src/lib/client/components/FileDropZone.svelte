@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { uploads, processFile, fetchUrl, isUrl, getMimeType, type FileUpload } from '$lib/uploads';
+  import { uploads, processFile, fetchUrl, isUrl, getMimeType, type FileUpload } from '$lib/client/uploads';
 
   interface Props {
     acceptedTypes?: string[];

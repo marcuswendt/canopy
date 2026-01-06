@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { PendingSuggestion } from '$lib/stores/suggestions';
+  import type { PendingSuggestion } from '$lib/client/stores/suggestions';
 
   interface Props {
     suggestion: PendingSuggestion;

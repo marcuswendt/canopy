@@ -15,9 +15,9 @@ import { config } from 'dotenv';
 // Load .env file at the top level
 config();
 
-import { registerProvider, setActiveProvider, getProvider } from '../ai/provider';
-import { testProvider } from '../ai/providers/test';
-import { getTestDb, resetTestDatabase, closeTestDb } from '../db/test-db';
+import { registerProvider, setActiveProvider, getProvider } from '$lib/ai/provider';
+import { testProvider } from '$lib/ai/providers/test';
+import { getTestDb, resetTestDatabase, closeTestDb } from '$lib/client/db/test-db';
 import { beforeAll, afterAll, beforeEach } from 'vitest';
 
 /**
@@ -122,5 +122,5 @@ export default async function globalSetup(): Promise<() => void> {
 }
 
 // Export test utilities
-export { getTestDb, resetTestDatabase, closeTestDb } from '../db/test-db';
-export { testProvider } from '../ai/providers/test';
+export { getTestDb, resetTestDatabase, closeTestDb } from '$lib/client/db/test-db';
+export { testProvider } from '$lib/ai/providers/test';

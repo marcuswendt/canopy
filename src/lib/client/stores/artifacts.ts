@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import type { Artifact, Entity } from '$lib/db/types';
+import type { Artifact, Entity } from '$lib/client/db/types';
 
 // Check if running in Electron
 const isElectron = typeof window !== 'undefined' && window.canopy !== undefined;

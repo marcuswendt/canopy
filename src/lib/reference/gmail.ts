@@ -7,7 +7,7 @@ import type {
   SearchResult,
   ReferenceItem,
 } from './types';
-import { searchGmail, googleApi } from '$lib/integrations/google';
+import { searchGmail, googleApi } from '$lib/client/integrations/google';
 
 // =============================================================================
 // HELPERS

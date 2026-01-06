@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { entities } from '$lib/stores/entities';
+  import { entities } from '$lib/client/stores/entities';
   import {
     createThread,
     addMessage,
@@ -15,7 +15,7 @@
     recordCoOccurrence,
     createMemory,
     getMemories
-  } from '$lib/db/client';
+  } from '$lib/client/db/client';
   import { generateChatResponse, getReferencesForQuery, extractChatSuggestions } from '$lib/ai/extraction';
   import { selectRelevantMemories } from '$lib/ai/memory';
   import { hasApiKey, getFallbackMessage } from '$lib/ai';
@@ -28,18 +28,18 @@
     rejectAllForMessage,
     startCleanupInterval,
     stopCleanupInterval
-  } from '$lib/stores/suggestions';
-  import SuggestionBar from '$lib/components/SuggestionBar.svelte';
+  } from '$lib/client/stores/suggestions';
+  import SuggestionBar from '$lib/client/components/SuggestionBar.svelte';
   import { buildChatContext, estimateMessageTokens } from '$lib/ai/context';
-  import type { Entity, Message, Thread, Memory } from '$lib/db/types';
+  import type { Entity, Message, Thread, Memory } from '$lib/client/db/types';
   import type { ReferenceContext } from '$lib/reference/types';
-  import DomainBadge from '$lib/components/DomainBadge.svelte';
-  import MentionInput from '$lib/components/MentionInput.svelte';
-  import ArtifactPanel from '$lib/components/ArtifactPanel.svelte';
-  import Markdown from '$lib/components/Markdown.svelte';
-  import { loadArtifacts } from '$lib/stores/artifacts';
-  import { userSettings } from '$lib/stores/settings';
-  import { weather } from '$lib/stores/weather';
+  import DomainBadge from '$lib/client/components/DomainBadge.svelte';
+  import MentionInput from '$lib/client/components/MentionInput.svelte';
+  import ArtifactPanel from '$lib/client/components/ArtifactPanel.svelte';
+  import Markdown from '$lib/client/components/Markdown.svelte';
+  import { loadArtifacts } from '$lib/client/stores/artifacts';
+  import { userSettings } from '$lib/client/stores/settings';
+  import { weather } from '$lib/client/stores/weather';
 
   let inputValue = $state('');
   let messages = $state<Message[]>([]);

@@ -2,10 +2,10 @@
 // Uses the AI provider abstraction to extract structured data from user input
 
 import { extract, stream, isError, type AIMessage, type StreamCallbacks } from './index';
-import type { Entity, Memory } from '$lib/db/types';
-import type { ExtractedContent, EntitySuggestion } from '$lib/uploads';
+import type { Entity, Memory } from '$lib/client/db/types';
+import type { ExtractedContent, EntitySuggestion } from '$lib/client/uploads';
 import { get } from 'svelte/store';
-import { recentTime, recentWeather, recentRecovery, todayEvents } from '$lib/integrations/registry';
+import { recentTime, recentWeather, recentRecovery, todayEvents } from '$lib/client/integrations/registry';
 import { gatherReferenceContext, formatContextForPrompt, type ReferenceContext } from '$lib/reference/registry';
 import { formatMemoriesForContext } from './memory';
 

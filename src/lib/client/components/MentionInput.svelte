@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { entities } from '$lib/stores/entities';
-  import type { Entity } from '$lib/db/types';
+  import { entities } from '$lib/client/stores/entities';
+  import type { Entity } from '$lib/client/db/types';
 
   interface Props {
     value: string;

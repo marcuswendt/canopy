@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { artifacts, updateArtifact, getArtifactsForEntities } from '$lib/stores/artifacts';
-  import type { Artifact, Entity } from '$lib/db/types';
+  import { artifacts, updateArtifact, getArtifactsForEntities } from '$lib/client/stores/artifacts';
+  import type { Artifact, Entity } from '$lib/client/db/types';
   import DomainBadge from './DomainBadge.svelte';
 
   interface Props {

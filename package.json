@@ -11,7 +11,7 @@
   "license": "UNLICENSED",
   "private": true,
   "type": "module",
-  "main": "electron/main.js",
+  "main": "src/electron/main.js",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
@@ -61,28 +61,28 @@
     },
     "files": [
       "build/**/*",
-      "electron/**/*",
+      "src/electron/**/*",
       "node_modules/**/*",
       "package.json"
     ],
-    "icon": "electron/resources/icon.png",
+    "icon": "src/electron/resources/icon.png",
     "mac": {
       "category": "public.app-category.productivity",
-      "icon": "electron/resources/icon.png",
+      "icon": "src/electron/resources/icon.png",
       "target": [
         "dmg",
         "zip"
       ]
     },
     "win": {
-      "icon": "electron/resources/icon.png",
+      "icon": "src/electron/resources/icon.png",
       "target": [
         "nsis",
         "zip"
       ]
     },
     "linux": {
-      "icon": "electron/resources/icon.png",
+      "icon": "src/electron/resources/icon.png",
       "target": [
         "AppImage",
         "deb"

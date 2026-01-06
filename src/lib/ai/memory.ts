@@ -2,7 +2,7 @@
 // Extracts memorable facts from conversations and stores them
 
 import { extract, isError } from './index';
-import type { Entity, Memory } from '$lib/db/types';
+import type { Entity, Memory } from '$lib/client/db/types';
 
 // =============================================================================
 // TYPES

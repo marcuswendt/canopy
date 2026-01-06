@@ -3,7 +3,7 @@
 // Default plugin - always enabled
 
 import type { CanopyPlugin, IntegrationSignal } from '../types';
-import { userSettings, guessLocation } from '$lib/stores/settings';
+import { userSettings, guessLocation } from '$lib/client/stores/settings';
 import { get } from 'svelte/store';
 
 // =============================================================================
