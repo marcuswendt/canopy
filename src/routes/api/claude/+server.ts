@@ -9,20 +9,27 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { parseBody, apiError } from '$lib/server/api-helpers';
 import Anthropic from '@anthropic-ai/sdk';
-import { ANTHROPIC_API_KEY } from '$env/static/private';
+import { env } from '$env/dynamic/private';
 
-// Initialize Anthropic client
-const anthropic = ANTHROPIC_API_KEY
-  ? new Anthropic({ apiKey: ANTHROPIC_API_KEY })
-  : null;
+// Lazy-initialize Anthropic client (reads env at runtime)
+let anthropic: Anthropic | null = null;
+
+function getClient(): Anthropic | null {
+  if (anthropic) return anthropic;
+  const apiKey = env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  anthropic = new Anthropic({ apiKey });
+  return anthropic;
+}
 
 export const GET: RequestHandler = async () => {
   // Health check - returns whether API key is configured
-  return json({ configured: !!anthropic });
+  return json({ configured: !!env.ANTHROPIC_API_KEY });
 };
 
 export const POST: RequestHandler = async (event) => {
-  if (!anthropic) {
+  const client = getClient();
+  if (!client) {
     return apiError('Claude API not configured', 503);
   }
 
@@ -44,7 +51,7 @@ export const POST: RequestHandler = async (event) => {
     }
 
     try {
-      const response = await anthropic.messages.create({
+      const response = await client.messages.create({
         model: 'claude-sonnet-4-20250514',
         max_tokens: body.maxTokens || 4096,
         temperature: body.temperature,
@@ -75,7 +82,7 @@ export const POST: RequestHandler = async (event) => {
     }
 
     try {
-      const response = await anthropic.messages.create({
+      const response = await client.messages.create({
         model: 'claude-sonnet-4-20250514',
         max_tokens: body.maxTokens || 4096,
         temperature: body.temperature ?? 0,
