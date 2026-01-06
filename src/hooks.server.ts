@@ -26,7 +26,8 @@ const protectRoutes: Handle = async ({ event, resolve }) => {
   const { pathname } = event.url;
 
   // Public routes that don't require auth
-  const publicPaths = ['/login', '/api/auth', '/auth'];
+  // Note: /api/claude GET is public (only returns config status, not sensitive)
+  const publicPaths = ['/login', '/api/auth', '/auth', '/api/claude'];
   const isPublic = publicPaths.some(p => pathname.startsWith(p));
 
   if (isPublic) {
